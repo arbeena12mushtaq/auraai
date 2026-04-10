@@ -1,0 +1,186 @@
+import { useState, useEffect } from 'react';
+import { api, PLANS, getPlanInfo } from '../utils/api';
+import { Avatar, CompanionCard, EmptyState, LoadingSpinner } from '../components/UI';
+import { useAuth } from '../hooks/useAuth';
+
+// ==================== CHAT LIST ====================
+export function ChatListPage({ onSelectChat }) {
+  const [chats, setChats] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/chat')
+      .then(d => setChats(d.chats || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <LoadingSpinner />;
+
+  return (
+    <div className="section">
+      <h2 className="section-title">Your Chats</h2>
+      <p className="section-subtitle">Continue your conversations</p>
+
+      {chats.length === 0 ? (
+        <EmptyState icon="💬" text="No chats yet. Discover companions to start chatting!" />
+      ) : (
+        chats.sort((a, b) => new Date(b.last_message_at) - new Date(a.last_message_at)).map(chat => (
+          <div key={chat.id} className="chat-list-item" onClick={() => onSelectChat(chat)}>
+            <Avatar name={chat.name} src={chat.avatar_url} size="sm" />
+            <div className="chat-list-meta">
+              <div className="chat-list-name">
+                <span>{chat.name}</span>
+                <span className="chat-list-time">
+                  {chat.last_message_at ? new Date(chat.last_message_at).toLocaleDateString() : ''}
+                </span>
+              </div>
+              <div className="chat-list-preview">{chat.last_message || ''}</div>
+            </div>
+            <span className="tag" style={{ flexShrink: 0 }}>{chat.message_count}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ==================== COLLECTION ====================
+export function CollectionPage({ onChat, onToggleSave, collection }) {
+  const [companions, setCompanions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/collections')
+      .then(d => setCompanions(d.companions || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [collection]);
+
+  if (loading) return <LoadingSpinner />;
+
+  return (
+    <div className="section">
+      <h2 className="section-title">Your Collection</h2>
+      <p className="section-subtitle">Your saved favorite companions</p>
+
+      {companions.length === 0 ? (
+        <EmptyState icon="💎" text="Save your favorite companions here by clicking the heart icon" />
+      ) : (
+        <div className="companion-grid">
+          {companions.map(comp => (
+            <CompanionCard key={comp.id} companion={comp} onChat={() => onChat(comp)}
+              onToggleSave={() => onToggleSave(comp.id)} isSaved={true} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== MY AI ====================
+export function MyAIPage({ onChat, onNavigate, onToggleSave, collection, setMyCompanionCount }) {
+  const [companions, setCompanions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/companions/user/mine')
+      .then(d => {
+        setCompanions(d.companions || []);
+        setMyCompanionCount?.(d.companions?.length || 0);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <LoadingSpinner />;
+
+  return (
+    <div className="section">
+      <div className="flex-between mb-3">
+        <div>
+          <h2 className="section-title">My Companions</h2>
+          <p className="section-subtitle" style={{ marginBottom: 0 }}>{companions.length} created</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => onNavigate('create')}>✨ Create New</button>
+      </div>
+
+      {companions.length === 0 ? (
+        <EmptyState
+          icon="🤖"
+          text="You haven't created any companions yet"
+          action={() => onNavigate('create')}
+          actionText="Create Your First"
+        />
+      ) : (
+        <div className="companion-grid">
+          {companions.map(comp => (
+            <CompanionCard key={comp.id} companion={comp} onChat={() => onChat(comp)}
+              onToggleSave={() => onToggleSave(comp.id)}
+              isSaved={collection?.includes(comp.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== PRICING ====================
+export function PricingPage({ onRequireAuth }) {
+  const { user, refreshUser } = useAuth();
+  const [loading, setLoading] = useState(null);
+
+  const handleSubscribe = async (planId) => {
+    if (!user) return onRequireAuth('signup');
+    setLoading(planId);
+    try {
+      await api('/payments/subscribe', { method: 'POST', body: { plan: planId, payment_method: 'card' } });
+      await refreshUser();
+      alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
+    } catch (err) {
+      alert(err.error || 'Payment failed');
+    }
+    setLoading(null);
+  };
+
+  return (
+    <div className="section" style={{ maxWidth: 960 }}>
+      <h2 className="section-title text-center">Choose Your Plan</h2>
+      <p className="section-subtitle text-center" style={{ maxWidth: 460, margin: '0 auto 36px' }}>
+        Unlock the full Aura AI experience with a plan that fits you
+      </p>
+
+      <div className="pricing-grid">
+        {PLANS.map(plan => (
+          <div key={plan.id} className={`plan-card ${plan.id === 'plus' ? 'featured' : ''}`}>
+            {plan.id === 'plus' && <div className="plan-badge">Most Popular</div>}
+            <div className="plan-name">{plan.name}</div>
+            <div className="plan-price">${plan.price}<span>/mo</span></div>
+            <div className="plan-messages">
+              {plan.messages === 999999 ? 'Unlimited' : plan.messages.toLocaleString()} messages/month
+            </div>
+            <div className="plan-features">
+              ✦ {plan.companions} companion slot{plan.companions > 1 ? 's' : ''}<br />
+              ✦ Full text chat<br />
+              {plan.voice && <>✦ Voice chat enabled<br /></>}
+              ✦ Chat history saved<br />
+              ✦ Content safety filter<br />
+              ✦ Priority support
+            </div>
+            <button
+              className={`btn btn-block ${plan.id === 'plus' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => handleSubscribe(plan.id)}
+              disabled={loading === plan.id || user?.plan === plan.id}
+            >
+              {user?.plan === plan.id ? '✓ Current Plan' : loading === plan.id ? 'Processing...' : 'Subscribe'}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-center mt-3" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+        🔒 Secure payments via Stripe & PayPal • Cancel anytime • Discreet billing
+      </div>
+    </div>
+  );
+}
