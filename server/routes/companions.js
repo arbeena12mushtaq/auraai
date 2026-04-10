@@ -112,6 +112,9 @@ router.post('/', authMiddleware, upload.single('avatar'), async (req, res) => {
     let avatar_url = null;
     if (req.file) {
       avatar_url = `/uploads/${req.file.filename}`;
+    } else if (req.body.generated_avatar_url) {
+      // Use the AI-generated avatar URL (already saved on server by /api/image/generate)
+      avatar_url = req.body.generated_avatar_url;
     }
 
     const parsedHobbies = hobbies ? (typeof hobbies === 'string' ? JSON.parse(hobbies) : hobbies) : [];

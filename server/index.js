@@ -42,6 +42,7 @@ app.use('/api/chat', require('./routes/chat'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/collections', require('./routes/collections'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/image', require('./routes/imageGen'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -17,6 +17,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
   const { user, refreshUser } = useAuth();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef();
 
@@ -25,6 +26,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     age_range: '20-24', eye_color: 'Brown', hair_style: 'Straight', hair_color: 'Black',
     body_type: 'Slim', personality: 'Sweet & Caring', voice: 'Soft & Gentle',
     hobbies: [], description: '', avatarFile: null, avatarPreview: null,
+    generatedAvatarUrl: null,
   });
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
@@ -47,15 +49,42 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     if (!file) return;
     set('avatarFile', file);
     const reader = new FileReader();
-    reader.onload = (ev) => set('avatarPreview', ev.target.result);
+    reader.onload = (ev) => {
+      set('avatarPreview', ev.target.result);
+      set('generatedAvatarUrl', null);
+    };
     reader.readAsDataURL(file);
+  };
+
+  const handleGenerateImage = async () => {
+    setGenerating(true);
+    setError('');
+    try {
+      const data = await api('/image/generate', {
+        method: 'POST',
+        body: {
+          category: form.category, art_style: form.art_style,
+          ethnicity: form.ethnicity, age_range: form.age_range,
+          eye_color: form.eye_color, hair_style: form.hair_style,
+          hair_color: form.hair_color, body_type: form.body_type,
+          personality: form.personality, description: form.description,
+        },
+      });
+      if (data.avatar_url) {
+        set('generatedAvatarUrl', data.avatar_url);
+        set('avatarPreview', data.avatar_url);
+        set('avatarFile', null);
+      }
+    } catch (err) {
+      setError(err.error || 'Image generation failed. You can upload an image manually instead.');
+    }
+    setGenerating(false);
   };
 
   const handleCreate = async () => {
     if (!form.name.trim()) return setError('Please give your companion a name');
     setLoading(true);
     setError('');
-
     try {
       const formData = new FormData();
       formData.append('name', form.name);
@@ -72,6 +101,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
       formData.append('hobbies', JSON.stringify(form.hobbies));
       formData.append('description', form.description);
       formData.append('tagline', `${form.personality} companion`);
+      if (form.generatedAvatarUrl) formData.append('generated_avatar_url', form.generatedAvatarUrl);
       if (form.avatarFile) formData.append('avatar', form.avatarFile);
 
       const data = await api('/companions', { method: 'POST', body: formData });
@@ -84,8 +114,10 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
   };
 
   const Chip = ({ value, selected, onClick }) => (
-    <button className={`chip ${selected ? 'active' : ''}`} onClick={onClick}>{value}</button>
+    <button className={`chip ${selected ? 'active' : ''}`} onClick={onClick} type="button">{value}</button>
   );
+
+  const previewSrc = form.avatarPreview || null;
 
   return (
     <div className="section" style={{ maxWidth: 640 }}>
@@ -98,6 +130,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
 
       {error && <div className="alert alert-error">{error}</div>}
 
+      {/* ===== STEP 1: Style & Image ===== */}
       {step === 1 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Style & Image</h3>
@@ -109,22 +142,85 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           <div className="chip-group mb-2">
             {['Realistic', 'Anime'].map(s => <Chip key={s} value={s} selected={form.art_style===s} onClick={() => set('art_style', s)} />)}
           </div>
-          <div className="upload-area" onClick={() => fileRef.current?.click()}>
-            {form.avatarPreview ? (
-              <img src={form.avatarPreview} alt="Preview" className="upload-preview" />
+
+          <div style={{
+            border: '2px dashed rgba(255,107,157,0.25)', borderRadius: 'var(--radius-lg)',
+            padding: 28, textAlign: 'center', marginBottom: 16, background: 'rgba(255,255,255,0.02)',
+          }}>
+            {previewSrc ? (
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img src={previewSrc} alt="Preview" style={{
+                  width: 130, height: 130, borderRadius: '50%', objectFit: 'cover',
+                  border: '3px solid var(--accent)', boxShadow: 'var(--shadow-glow)',
+                }} />
+                <button className="btn btn-ghost btn-sm" type="button"
+                  style={{ position: 'absolute', top: -6, right: -6, background: 'var(--bg-card)', borderRadius: '50%', width: 26, height: 26, padding: 0, fontSize: 13 }}
+                  onClick={() => { set('avatarPreview', null); set('avatarFile', null); set('generatedAvatarUrl', null); }}>
+                  ✕
+                </button>
+                {form.generatedAvatarUrl && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--success)' }}>✓ AI Generated</div>}
+              </div>
             ) : (
               <>
-                <div className="upload-icon">📷</div>
-                <div className="upload-text">Click to upload a photo (optional)</div>
+                <div style={{ fontSize: 42, marginBottom: 10, opacity: 0.6 }}>🖼️</div>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 18 }}>
+                  Upload a photo or generate one with AI
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} type="button">
+                    📷 Upload Photo
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
+                    {generating ? (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="gen-spinner" />
+                        Generating...
+                      </span>
+                    ) : '✨ Generate with AI'}
+                  </button>
+                </div>
               </>
             )}
             <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImageUpload} />
           </div>
-          <textarea className="input" placeholder="Or describe how your companion looks..."
+
+          {previewSrc && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => fileRef.current?.click()} type="button">
+                📷 Upload Different
+              </button>
+              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleGenerateImage} disabled={generating} type="button">
+                {generating ? '✨ Generating...' : '🔄 Regenerate'}
+              </button>
+            </div>
+          )}
+
+          <div className="form-label">Description (improves AI image + personality)</div>
+          <textarea className="input" style={{ minHeight: 90 }}
+            placeholder="e.g. 'A cheerful woman with freckles and a warm smile, wearing a cozy sweater in a coffee shop'"
             value={form.description} onChange={e => set('description', e.target.value)} />
+
+          {form.description && !previewSrc && (
+            <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--accent-glow)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--accent)' }}>
+              💡 You wrote a description — click "Generate with AI" to create a matching avatar!
+            </div>
+          )}
+
+          <style>{`
+            .gen-spinner {
+              width: 14px; height: 14px;
+              border: 2px solid rgba(255,255,255,0.3);
+              border-top-color: #fff;
+              border-radius: 50%;
+              animation: spin 0.8s linear infinite;
+              display: inline-block;
+            }
+            @keyframes spin { to { transform: rotate(360deg); } }
+          `}</style>
         </div>
       )}
 
+      {/* ===== STEP 2: Appearance ===== */}
       {step === 2 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Appearance</h3>
@@ -143,9 +239,23 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           <div className="chip-group">{HAIR_COLORS.map(v => <Chip key={v} value={v} selected={form.hair_color===v} onClick={() => set('hair_color', v)} />)}</div>
           <div className="form-label">Body Type</div>
           <div className="chip-group">{BODY_TYPES.map(v => <Chip key={v} value={v} selected={form.body_type===v} onClick={() => set('body_type', v)} />)}</div>
+
+          {/* Regen banner */}
+          <div style={{ marginTop: 20, padding: '14px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+            {previewSrc && <img src={previewSrc} style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' }} />}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                {previewSrc ? 'Changed traits? Regenerate to match.' : 'No avatar yet — generate one!'}
+              </div>
+              <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
+                {generating ? '✨ Generating...' : previewSrc ? '🔄 Regenerate Avatar' : '✨ Generate Avatar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
+      {/* ===== STEP 3: Personality ===== */}
       {step === 3 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Personality & Voice</h3>
@@ -158,15 +268,24 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
         </div>
       )}
 
+      {/* ===== STEP 4: Review ===== */}
       {step === 4 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Review & Create</h3>
           <div className="review-card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-              <Avatar name={form.name || 'A'} src={form.avatarPreview} size="lg" />
+              {previewSrc ? (
+                <img src={previewSrc} alt={form.name} style={{
+                  width: 80, height: 80, borderRadius: '50%', objectFit: 'cover',
+                  border: '3px solid var(--accent)', boxShadow: 'var(--shadow-glow)'
+                }} />
+              ) : (
+                <Avatar name={form.name || 'A'} size="lg" />
+              )}
               <div>
                 <h3 style={{ fontSize: 22, fontWeight: 800 }}>{form.name || 'Unnamed'}</h3>
                 <p className="text-muted" style={{ fontSize: 13 }}>{form.personality} • {form.ethnicity}</p>
+                {form.generatedAvatarUrl && <span style={{ fontSize: 10, color: 'var(--success)' }}>✓ AI Generated Avatar</span>}
               </div>
             </div>
             <div className="review-detail-grid">
@@ -178,13 +297,18 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
               <div><span className="review-detail-label">Voice: </span>{form.voice}</div>
             </div>
             {form.hobbies.length > 0 && (
-              <div style={{ marginTop: 14, fontSize: 13 }}>
-                <span className="review-detail-label">Hobbies: </span>{form.hobbies.join(', ')}
-              </div>
+              <div style={{ marginTop: 14, fontSize: 13 }}><span className="review-detail-label">Hobbies: </span>{form.hobbies.join(', ')}</div>
             )}
             {form.description && (
-              <div style={{ marginTop: 10, fontSize: 13 }}>
-                <span className="review-detail-label">Description: </span>{form.description}
+              <div style={{ marginTop: 10, fontSize: 13 }}><span className="review-detail-label">Description: </span>{form.description}</div>
+            )}
+
+            {!previewSrc && (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--accent-glow)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                <p style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 8 }}>No avatar — generate one before creating?</p>
+                <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
+                  {generating ? '✨ Generating...' : '✨ Generate Avatar Now'}
+                </button>
               </div>
             )}
           </div>
