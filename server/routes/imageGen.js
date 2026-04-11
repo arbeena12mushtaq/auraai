@@ -4,87 +4,46 @@ const path = require('path');
 const { authMiddleware, contentFilter } = require('../middleware/auth');
 
 const router = express.Router();
-
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// Build a safe, detailed prompt from companion traits
 function buildImagePrompt(data) {
-  const {
-    category, art_style, ethnicity, age_range, eye_color,
-    hair_style, hair_color, body_type, personality, description
-  } = data;
+  const gender = data.category === 'Guys' ? 'male' : 'female';
+  const isAnime = data.art_style === 'Anime';
 
-  const gender = category === 'Guys' ? 'male' : 'female';
-  const style = art_style === 'Anime' ? 'anime art style' : 'photorealistic portrait photograph';
+  let prompt = isAnime
+    ? `Beautiful anime character portrait, ${gender}`
+    : `Professional portrait photograph of a beautiful ${gender} person`;
 
-  let prompt = `A beautiful ${style} of a ${gender} person`;
+  if (data.ethnicity) prompt += `, ${data.ethnicity} ethnicity`;
+  if (data.age_range) prompt += `, appears ${data.age_range} years old`;
+  if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color} ${data.hair_style} hair`;
+  if (data.eye_color) prompt += `, ${data.eye_color} eyes`;
+  if (data.body_type) prompt += `, ${data.body_type} build`;
+  if (data.description) prompt += `. ${data.description}`;
 
-  if (ethnicity) prompt += `, ${ethnicity} ethnicity`;
-  if (age_range) prompt += `, appears ${age_range} years old`;
-  if (hair_color && hair_style) prompt += `, ${hair_color.toLowerCase()} ${hair_style.toLowerCase()} hair`;
-  if (eye_color) prompt += `, ${eye_color.toLowerCase()} eyes`;
-  if (body_type) prompt += `, ${body_type.toLowerCase()} build`;
-  if (description) prompt += `. ${description}`;
-
-  prompt += '. Soft studio lighting, warm tones, friendly expression, looking at camera, portrait headshot, high quality';
-
-  // Safety: keep it clean
-  if (art_style === 'Anime') {
-    prompt += ', clean anime art, wholesome, colorful, studio ghibli inspired';
+  if (isAnime) {
+    prompt += '. Clean anime art style, vibrant colors, detailed eyes, soft lighting, high quality anime illustration, wholesome, fully clothed';
   } else {
-    prompt += ', professional portrait, tasteful, fully clothed, natural beauty';
+    prompt += '. Soft natural lighting, warm tones, friendly confident expression, looking at camera, sharp focus, shallow depth of field, professional headshot, fully clothed, tasteful, attractive';
   }
 
   return prompt;
 }
 
-// Strategy 1: Stability AI (stable diffusion)
-async function generateWithStabilityAI(prompt) {
-  const apiKey = process.env.STABILITY_API_KEY;
-  if (!apiKey) return null;
-
-  try {
-    const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'image/*',
-      },
-      body: (() => {
-        const formData = new FormData();
-        formData.append('prompt', prompt);
-        formData.append('negative_prompt', 'nsfw, nude, naked, sexual, violence, blood, gore, ugly, deformed');
-        formData.append('output_format', 'png');
-        formData.append('aspect_ratio', '1:1');
-        return formData;
-      })(),
-    });
-
-    if (!response.ok) return null;
-    const buffer = await response.arrayBuffer();
-    return Buffer.from(buffer);
-  } catch (err) {
-    console.error('Stability AI error:', err.message);
-    return null;
-  }
-}
-
-// Strategy 2: OpenAI DALL-E
+// OpenAI DALL-E 3
 async function generateWithOpenAI(prompt) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) { console.log('No OPENAI_API_KEY'); return null; }
 
   try {
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
+    console.log('🎨 Calling OpenAI DALL-E...');
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'dall-e-3',
-        prompt: prompt + ' Safe for work, no nudity, fully clothed.',
+        prompt: prompt + '. Safe for work, no nudity, fully clothed, portrait only.',
         n: 1,
         size: '1024x1024',
         quality: 'standard',
@@ -92,49 +51,51 @@ async function generateWithOpenAI(prompt) {
       }),
     });
 
-    if (!response.ok) return null;
-    const data = await response.json();
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('DALL-E error:', res.status, errText);
+      return null;
+    }
+
+    const data = await res.json();
     const b64 = data.data?.[0]?.b64_json;
-    if (!b64) return null;
+    if (!b64) { console.error('DALL-E: no image data in response'); return null; }
+    console.log('✅ DALL-E image generated');
     return Buffer.from(b64, 'base64');
   } catch (err) {
-    console.error('OpenAI DALL-E error:', err.message);
+    console.error('DALL-E fetch error:', err.message);
     return null;
   }
 }
 
-// Strategy 3: Together AI (affordable, fast)
+// Together AI FLUX (cheap backup)
 async function generateWithTogetherAI(prompt) {
   const apiKey = process.env.TOGETHER_API_KEY;
   if (!apiKey) return null;
 
   try {
-    const response = await fetch('https://api.together.xyz/v1/images/generations', {
+    console.log('🎨 Calling Together AI...');
+    const res = await fetch('https://api.together.xyz/v1/images/generations', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'black-forest-labs/FLUX.1-schnell-Free',
         prompt: prompt,
-        negative_prompt: 'nsfw, nude, naked, sexual, violence, gore, ugly, deformed, bad anatomy',
-        width: 768,
-        height: 768,
-        steps: 4,
-        n: 1,
+        negative_prompt: 'nsfw, nude, naked, sexual, violence, gore, ugly, deformed',
+        width: 768, height: 768, steps: 4, n: 1,
         response_format: 'b64_json',
       }),
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      console.error('Together AI response:', err);
+    if (!res.ok) {
+      console.error('Together AI error:', res.status, await res.text());
       return null;
     }
-    const data = await response.json();
+
+    const data = await res.json();
     const b64 = data.data?.[0]?.b64_json;
     if (!b64) return null;
+    console.log('✅ Together AI image generated');
     return Buffer.from(b64, 'base64');
   } catch (err) {
     console.error('Together AI error:', err.message);
@@ -142,84 +103,79 @@ async function generateWithTogetherAI(prompt) {
   }
 }
 
-// Strategy 4: Pollinations AI (free, no API key needed)
-async function generateWithPollinations(prompt) {
+// Stability AI
+async function generateWithStabilityAI(prompt) {
+  const apiKey = process.env.STABILITY_API_KEY;
+  if (!apiKey) return null;
+
   try {
-    const encodedPrompt = encodeURIComponent(prompt + ' Safe for work, fully clothed, portrait photograph.');
-    const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=768&nologo=true&model=flux`;
+    console.log('🎨 Calling Stability AI...');
+    const formData = new URLSearchParams();
+    formData.append('prompt', prompt);
+    formData.append('negative_prompt', 'nsfw nude naked sexual violence gore ugly deformed');
+    formData.append('output_format', 'png');
 
-    const response = await fetch(url, { redirect: 'follow' });
-    if (!response.ok) return null;
+    const res = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'image/*' },
+      body: formData,
+    });
 
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength < 5000) return null; // too small = error image
+    if (!res.ok) {
+      console.error('Stability error:', res.status);
+      return null;
+    }
+
+    const buffer = await res.arrayBuffer();
+    console.log('✅ Stability AI image generated');
     return Buffer.from(buffer);
   } catch (err) {
-    console.error('Pollinations error:', err.message);
+    console.error('Stability error:', err.message);
     return null;
   }
 }
 
-// Generate image endpoint
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
-    const { category, art_style, ethnicity, age_range, eye_color,
-            hair_style, hair_color, body_type, personality, description } = req.body;
-
-    // Content safety check
-    if (description && !contentFilter(description)) {
+    if (req.body.description && !contentFilter(req.body.description)) {
       return res.status(400).json({ error: 'Description contains inappropriate content' });
     }
 
     const prompt = buildImagePrompt(req.body);
-    console.log('🎨 Generating image with prompt:', prompt.substring(0, 100) + '...');
+    console.log('🎨 Image prompt:', prompt.substring(0, 120) + '...');
 
-    // Try each provider in order of preference
+    // Try providers in order: OpenAI (you have key) → Together → Stability
     let imageBuffer = null;
     let provider = '';
 
-    // 1. Try Stability AI
-    imageBuffer = await generateWithStabilityAI(prompt);
-    if (imageBuffer) { provider = 'stability'; }
+    imageBuffer = await generateWithOpenAI(prompt);
+    if (imageBuffer) provider = 'openai';
 
-    // 2. Try OpenAI DALL-E
-    if (!imageBuffer) {
-      imageBuffer = await generateWithOpenAI(prompt);
-      if (imageBuffer) { provider = 'openai'; }
-    }
-
-    // 3. Try Together AI
     if (!imageBuffer) {
       imageBuffer = await generateWithTogetherAI(prompt);
-      if (imageBuffer) { provider = 'together'; }
+      if (imageBuffer) provider = 'together';
     }
 
-    // 4. Try Pollinations (free fallback)
     if (!imageBuffer) {
-      imageBuffer = await generateWithPollinations(prompt);
-      if (imageBuffer) { provider = 'pollinations'; }
+      imageBuffer = await generateWithStabilityAI(prompt);
+      if (imageBuffer) provider = 'stability';
     }
 
     if (!imageBuffer) {
       return res.status(500).json({
         error: 'Image generation unavailable. Please upload an image instead.',
-        hint: 'Add OPENAI_API_KEY, STABILITY_API_KEY, or TOGETHER_API_KEY to enable AI image generation.'
+        hint: 'Check that your OPENAI_API_KEY is valid and has DALL-E access.',
       });
     }
 
-    // Save to disk
     const filename = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
     const filepath = path.join(uploadDir, filename);
     fs.writeFileSync(filepath, imageBuffer);
+    console.log(`✅ Saved ${provider} image: ${filename} (${Math.round(imageBuffer.length/1024)}KB)`);
 
-    console.log(`✅ Image generated via ${provider}: ${filename} (${Math.round(imageBuffer.length / 1024)}KB)`);
-
-    res.json({
-      avatar_url: `/uploads/${filename}`,
-      provider,
-    });
+    res.json({ avatar_url: `/uploads/${filename}`, provider });
   } catch (err) {
-    console.error('Image generation error:', err);
+    console.error('Image gen error:', err);
     res.status(500).json({ error: 'Failed to generate image' });
   }
 });
