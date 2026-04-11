@@ -52,25 +52,27 @@ router.post('/stt', authMiddleware, audioUpload.single('audio'), async (req, res
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return res.status(400).json({ error: 'Not configured' });
-
     if (!req.file) return res.status(400).json({ error: 'No audio file' });
-    tempPath = req.file.path;
 
-    // Rename to have proper extension
+    tempPath = req.file.path;
     const newPath = tempPath + '.webm';
     fs.renameSync(tempPath, newPath);
     tempPath = newPath;
 
-    // Use form-data for multipart upload to OpenAI
-    const FormData = require('form-data');
-    const form = new FormData();
-    form.append('file', fs.createReadStream(tempPath), { filename: 'voice.webm', contentType: 'audio/webm' });
-    form.append('model', 'whisper-1');
+    console.log(`🎙️ STT: Processing ${Math.round(fs.statSync(tempPath).size / 1024)}KB audio...`);
+
+    // Read file into buffer and create a Blob for native fetch FormData
+    const fileBuffer = fs.readFileSync(tempPath);
+    const blob = new Blob([fileBuffer], { type: 'audio/webm' });
+
+    const formData = new FormData();
+    formData.append('file', blob, 'voice.webm');
+    formData.append('model', 'whisper-1');
 
     const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, ...form.getHeaders() },
-      body: form,
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      body: formData,
     });
 
     if (!r.ok) {
@@ -80,10 +82,10 @@ router.post('/stt', authMiddleware, audioUpload.single('audio'), async (req, res
     }
 
     const data = await r.json();
-    console.log(`🎙️ STT: "${(data.text || '').substring(0, 60)}"`);
+    console.log(`✅ STT: "${(data.text || '').substring(0, 80)}"`);
     res.json({ text: data.text || '' });
   } catch (e) {
-    console.error('STT:', e.message);
+    console.error('STT error:', e.message);
     res.status(500).json({ error: 'Transcription failed' });
   } finally {
     if (tempPath) try { fs.unlinkSync(tempPath); } catch {}
