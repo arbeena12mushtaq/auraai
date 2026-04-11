@@ -130,15 +130,45 @@ export function PricingPage({ onRequireAuth }) {
   const { user, refreshUser } = useAuth();
   const [loading, setLoading] = useState(null);
 
+  // Check for payment success redirect from Stripe
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    const plan = params.get('plan');
+    if (payment === 'success' && plan && user) {
+      // Confirm payment on backend
+      api('/payments/confirm', { method: 'POST', body: { plan } })
+        .then(() => { refreshUser(); window.history.replaceState({}, '', '/'); })
+        .catch(() => {});
+    }
+  }, [user]);
+
   const handleSubscribe = async (planId) => {
     if (!user) return onRequireAuth('signup');
+    if (user.plan === planId) return;
     setLoading(planId);
     try {
-      await api('/payments/subscribe', { method: 'POST', body: { plan: planId, payment_method: 'card' } });
-      await refreshUser();
-      alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
+      // Try Stripe Checkout first
+      const data = await api('/payments/create-checkout', { method: 'POST', body: { plan: planId } });
+      if (data.url) {
+        // Redirect to Stripe payment page
+        window.location.href = data.url;
+        return;
+      }
+      if (data.demo) {
+        // Demo mode — no Stripe key configured
+        await refreshUser();
+        alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
+      }
     } catch (err) {
-      alert(err.error || 'Payment failed');
+      // Fallback to demo subscribe
+      try {
+        await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
+        await refreshUser();
+        alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
+      } catch (err2) {
+        alert(err2.error || 'Payment failed');
+      }
     }
     setLoading(null);
   };
