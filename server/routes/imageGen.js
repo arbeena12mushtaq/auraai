@@ -8,24 +8,27 @@ const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 function buildImagePrompt(data) {
-  const gender = data.category === 'Guys' ? 'male' : 'female';
+  const gender = data.category === 'Guys' ? 'man' : 'woman';
   const isAnime = data.art_style === 'Anime';
 
+  // OpenAI DALL-E safety: avoid "beautiful", body descriptions, age numbers
   let prompt = isAnime
-    ? `Beautiful anime character portrait, ${gender}`
-    : `Professional portrait photograph of a beautiful ${gender} person`;
+    ? `Anime character portrait of a friendly ${gender}`
+    : `Professional studio headshot portrait of a friendly ${gender}`;
 
-  if (data.ethnicity) prompt += `, ${data.ethnicity} ethnicity`;
-  if (data.age_range) prompt += `, appears ${data.age_range} years old`;
-  if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color} ${data.hair_style} hair`;
-  if (data.eye_color) prompt += `, ${data.eye_color} eyes`;
-  if (data.body_type) prompt += `, ${data.body_type} build`;
-  if (data.description) prompt += `. ${data.description}`;
+  if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
+  if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
+  if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
+  if (data.description) {
+    // Strip any potentially unsafe words from user description
+    const safeDesc = data.description.replace(/\b(sexy|hot|beautiful|gorgeous|stunning|attractive|slim|curvy|petite|busty|thicc)\b/gi, '').trim();
+    if (safeDesc) prompt += `. ${safeDesc}`;
+  }
 
   if (isAnime) {
-    prompt += '. Clean anime art style, vibrant colors, detailed eyes, soft lighting, high quality anime illustration, wholesome, fully clothed';
+    prompt += '. Clean modern anime art, vibrant colors, detailed eyes, soft lighting, high quality digital illustration, cheerful expression, casual outfit';
   } else {
-    prompt += '. Soft natural lighting, warm tones, friendly confident expression, looking at camera, sharp focus, shallow depth of field, professional headshot, fully clothed, tasteful, attractive';
+    prompt += '. Soft natural lighting, warm color palette, genuine friendly smile, looking at camera, sharp focus, shallow depth of field, casual clothing, neutral background, high quality photograph';
   }
 
   return prompt;
@@ -150,6 +153,15 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     imageBuffer = await generateWithOpenAI(prompt);
     if (imageBuffer) provider = 'openai';
+
+    // If DALL-E rejected for safety, retry with simpler prompt
+    if (!imageBuffer && process.env.OPENAI_API_KEY) {
+      const gender = req.body.category === 'Guys' ? 'man' : 'woman';
+      const simplePrompt = `Professional headshot photograph of a friendly young ${gender}, ${req.body.hair_color || ''} hair, ${req.body.eye_color || ''} eyes, smiling, casual clothing, neutral studio background, soft lighting, high quality portrait`;
+      console.log('🔄 Retrying DALL-E with simplified prompt...');
+      imageBuffer = await generateWithOpenAI(simplePrompt);
+      if (imageBuffer) provider = 'openai-retry';
+    }
 
     if (!imageBuffer) {
       imageBuffer = await generateWithTogetherAI(prompt);

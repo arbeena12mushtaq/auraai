@@ -61,6 +61,39 @@ export default function AdminPage() {
             <StatCard label="Total Messages" value={stats.totalMessages?.toLocaleString()} />
             <StatCard label="Companions" value={stats.totalCompanions} />
           </div>
+
+          {/* Admin Actions */}
+          <div style={{ marginTop: 24, padding: 20, background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
+            <h3 style={{ fontSize: 16, marginBottom: 12 }}>Admin Actions</h3>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={async () => {
+                if (!confirm('Generate AI avatars for all 16 presets? This costs ~$0.64 from your OpenAI credits.')) return;
+                try {
+                  const data = await api('/admin/generate-avatars', { method: 'POST' });
+                  alert(data.message || 'Avatar generation started! Check Railway logs for progress. Refresh the page in a few minutes.');
+                } catch (err) {
+                  alert(err.error || 'Failed to start generation');
+                }
+              }}>
+                🎨 Generate AI Avatars for Presets
+              </button>
+              <button className="btn btn-secondary" onClick={async () => {
+                if (!confirm('Reseed all preset companions? This deletes and recreates them.')) return;
+                try {
+                  await api('/admin/reseed-presets', { method: 'POST' });
+                  alert('Presets reseeded! Refresh the page.');
+                  window.location.reload();
+                } catch (err) {
+                  alert(err.error || 'Reseed failed');
+                }
+              }}>
+                🔄 Reseed Presets
+              </button>
+            </div>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+              Generate AI Avatars creates beautiful DALL-E portraits for all preset characters. Takes ~2 minutes.
+            </p>
+          </div>
         </div>
       )}
 

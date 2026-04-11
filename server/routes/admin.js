@@ -116,18 +116,102 @@ router.post('/presets', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
-// Force reseed presets (admin) — use this to update avatar URLs
+// Force reseed presets (admin)
 router.post('/reseed-presets', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await pool.query('DELETE FROM companions WHERE is_preset = true');
-    // Reimport database init to reseed
     const { initDatabase } = require('../config/database');
     await initDatabase();
-    res.json({ success: true, message: 'Presets reseeded with new images' });
+    res.json({ success: true, message: 'Presets reseeded' });
   } catch (err) {
     console.error('Reseed error:', err);
     res.status(500).json({ error: 'Reseed failed' });
   }
+});
+
+// Generate AI avatars for all presets (admin) — costs ~$0.64 for 16 images with DALL-E HD
+router.post('/generate-avatars', authMiddleware, adminMiddleware, async (req, res) => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return res.status(400).json({ error: 'OPENAI_API_KEY not configured' });
+
+  const fs = require('fs');
+  const path = require('path');
+  const uploadDir = path.join(__dirname, '..', 'uploads');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+  const PROMPTS = {
+    'Aria': 'Professional fashion photography headshot of a young woman with blonde wavy hair, blue eyes, warm genuine smile, wearing a cream knit sweater, soft golden hour lighting, magazine quality portrait',
+    'Luna': 'Professional portrait of a confident young Latina woman with long dark hair, brown eyes, wearing a stylish leather jacket, urban background blurred, warm tones, editorial fashion photography',
+    'Emilia': 'Professional portrait of a young woman with red curly hair, green eyes, playful confident expression, wearing a white blouse, natural outdoor lighting, garden background, fashion photography',
+    'Zara': 'Professional portrait of a confident young Black woman with natural curly hair, radiant smile, wearing a vibrant yellow top, studio lighting, fashion editorial style',
+    'Mei': 'Professional portrait of a gentle young East Asian woman with straight brown hair, soft warm smile, wearing a light blue cardigan, cafe background blurred, natural lighting',
+    'Sofia': 'Professional portrait of a young Latina woman with wavy brown hair, thoughtful expression, wearing earth-tone dress, golden hour outdoor lighting, editorial quality',
+    'Nadia': 'Professional portrait of a young Middle Eastern woman with long dark hair, mysterious confident smile, wearing elegant dark clothing, dramatic studio lighting',
+    'Elena': 'Professional portrait of a young woman with straight blonde hair, blue eyes, energetic bright smile, wearing athletic casual wear, bright outdoor lighting',
+    'Isabella': 'Professional portrait of a young Latina woman with wavy dark hair, warm sweet expression, wearing a floral summer dress, warm sunset lighting',
+    'Aisha': 'Professional portrait of a young Black woman with curly natural hair, wise serene expression, wearing elegant earth tones, soft studio lighting, fine art portrait',
+    'Kai': 'Professional portrait of a confident young East Asian man with short black hair, charming smile, wearing a fitted dark henley shirt, urban background, editorial photography',
+    'Marcus': 'Professional portrait of a warm young Black man with short hair, genuine friendly smile, wearing a casual denim jacket, outdoor natural lighting',
+    'Liam': 'Professional portrait of a young man with short brown hair, green eyes, confident smirk, wearing a casual blazer, cafe background, editorial style',
+    'Sakura': 'Anime character portrait, young woman with pink straight hair, green eyes, shy gentle expression, pastel school uniform, cherry blossom background, modern anime art, detailed',
+    'Yuki': 'Anime character portrait, energetic young woman with short white hair, bright blue eyes, cheerful expression, colorful casual outfit, neon city background, modern anime art',
+    'Mia': 'Anime character portrait, gentle young woman with long purple hair, gray eyes, soft shy smile, cozy oversized sweater, rainy window background, modern anime art',
+  };
+
+  res.json({ message: `Starting generation of ${Object.keys(PROMPTS).length} avatars. Check server logs for progress.` });
+
+  // Run in background
+  (async () => {
+    let success = 0;
+    for (const [name, prompt] of Object.entries(PROMPTS)) {
+      try {
+        console.log(`🎨 Generating avatar for ${name}...`);
+        const imgRes = await fetch('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'dall-e-3', prompt, n: 1, size: '1024x1024', quality: 'hd', response_format: 'b64_json',
+          }),
+        });
+
+        if (!imgRes.ok) {
+          console.log(`  ❌ ${name}: DALL-E rejected (${imgRes.status})`);
+          // Retry with simpler prompt
+          const simpleRes = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'dall-e-3',
+              prompt: `Professional headshot portrait of a friendly young person, ${name}, smiling, casual clothing, studio lighting, high quality photograph`,
+              n: 1, size: '1024x1024', quality: 'standard', response_format: 'b64_json',
+            }),
+          });
+          if (!simpleRes.ok) { console.log(`  ❌ ${name}: retry also failed`); continue; }
+          const simpleData = await simpleRes.json();
+          const buf = Buffer.from(simpleData.data[0].b64_json, 'base64');
+          const fn = `preset-${name.toLowerCase()}-${Date.now()}.png`;
+          fs.writeFileSync(path.join(uploadDir, fn), buf);
+          await pool.query('UPDATE companions SET avatar_url = $1 WHERE name = $2 AND is_preset = true', [`/uploads/${fn}`, name]);
+          console.log(`  ✅ ${name}: saved (retry)`);
+          success++;
+        } else {
+          const data = await imgRes.json();
+          const buf = Buffer.from(data.data[0].b64_json, 'base64');
+          const fn = `preset-${name.toLowerCase()}-${Date.now()}.png`;
+          fs.writeFileSync(path.join(uploadDir, fn), buf);
+          await pool.query('UPDATE companions SET avatar_url = $1 WHERE name = $2 AND is_preset = true', [`/uploads/${fn}`, name]);
+          console.log(`  ✅ ${name}: saved (${Math.round(buf.length / 1024)}KB)`);
+          success++;
+        }
+
+        await new Promise(r => setTimeout(r, 3000)); // rate limit delay
+      } catch (err) {
+        console.log(`  ❌ ${name}: ${err.message}`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+    console.log(`\n🎨 Avatar generation complete: ${success}/${Object.keys(PROMPTS).length} generated`);
+  })();
 });
 
 module.exports = router;
