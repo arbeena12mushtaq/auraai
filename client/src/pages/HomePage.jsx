@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../utils/api';
-import { Avatar, CompanionCard } from '../components/UI';
+import { CompanionCard } from '../components/UI';
 
 const CATEGORIES = ['Girls', 'Anime', 'Guys'];
 const FEATURES = [
@@ -14,13 +14,12 @@ const FEATURES = [
 ];
 
 const FAQS = [
-  { q: 'What is Aura AI?', a: 'Aura AI is a premium companion platform where you can create personalized AI friends with unique personalities, appearances, and interests. Chat with them anytime for meaningful, supportive conversations in a safe environment.' },
-  { q: 'Is Aura AI safe to use?', a: 'Absolutely. We use encrypted transactions, strict content filtering to keep all interactions appropriate, and privacy-first design. All conversations are private and secure. We are fully compliant with Stripe and PayPal content policies.' },
-  { q: 'Can I customize my companion?', a: 'Yes! You can customize ethnicity, age range, eye color, hair style and color, body type, personality traits, voice style, and hobbies. You can also upload your own reference image or describe how you want them to look.' },
-  { q: 'How does the free trial work?', a: 'New users get a 24-hour free trial with 50 messages and 1 companion slot. After the trial period, you\'ll need to subscribe to one of our plans to continue chatting.' },
-  { q: 'What payment methods are accepted?', a: 'We accept all major credit/debit cards via Stripe and PayPal. All transactions are processed securely with discreet billing — no reference to Aura AI appears on your statement.' },
-  { q: 'Can my companion send voice messages?', a: 'Voice chat is available on Plus and Premium plans. Your companion will respond with natural-sounding voice messages tailored to their personality.' },
-  { q: 'Can I create multiple companions?', a: 'Yes! The number of companions you can create depends on your plan: Starter allows 1, Plus allows 3, and Premium allows up to 10 unique companions.' },
+  { q: 'What is Aura AI?', a: 'Aura AI is a premium companion platform where you create personalized AI friends with unique personalities, appearances, and interests. Chat anytime for meaningful, supportive conversations in a safe environment.' },
+  { q: 'Is it safe to use?', a: 'Absolutely. We use encrypted transactions, strict content filtering, and privacy-first design. All conversations are private. Fully compliant with Stripe and PayPal policies.' },
+  { q: 'Can I customize my companion?', a: 'Yes! Customize ethnicity, age range, eye color, hair style/color, body type, personality, voice, and hobbies. Upload your own image or generate one with AI.' },
+  { q: 'How does the free trial work?', a: 'New users get a 24-hour free trial with 50 messages and 1 companion slot. After the trial, subscribe to continue.' },
+  { q: 'What payment methods are accepted?', a: 'We accept all major cards via Stripe and PayPal. Discreet billing — no reference to Aura AI on your statement.' },
+  { q: 'Can my companion send voice messages?', a: 'Voice chat is available on Plus and Premium plans with natural-sounding responses.' },
 ];
 
 export default function HomePage({ onNavigate, onChat, onToggleSave, collection, onRequireAuth }) {
@@ -30,95 +29,180 @@ export default function HomePage({ onNavigate, onChat, onToggleSave, collection,
   const [faqOpen, setFaqOpen] = useState(null);
 
   useEffect(() => {
-    api('/companions/presets').then(d => setPresets(d.companions)).catch(() => {});
+    api('/companions/presets').then(d => setPresets(d.companions || [])).catch(() => {});
   }, []);
 
   const filtered = presets.filter(c => c.category === category);
+  const heroChars = presets.filter(c => c.category === 'Girls').slice(0, 3);
 
   return (
     <div>
-      {/* Hero */}
-      <div className="hero">
-        <div className="hero-avatars">
-          {presets.slice(0, 6).map(c => (
-            <Avatar key={c.id} name={c.name} src={c.avatar_url} size="md" />
-          ))}
-        </div>
-        <h1 className="hero-title">
-          Meet your perfect<br /><span className="accent">AI Companion</span>
-        </h1>
-        <p className="hero-subtitle">
-          Always available, always supportive, and crafted just for you.
-          Create your personalized AI friend and start chatting today.
-        </p>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={() => user ? onNavigate('create') : onRequireAuth('signup')}
-        >
-          {user ? '✨ Create Your AI' : 'Join Now for FREE'}
-        </button>
-        <div className="hero-trust">
-          <span className="hero-stars">★★★★★</span>
-          <span>Trusted by thousands worldwide</span>
+      {/* ============ HERO BANNER ============ */}
+      <div style={{
+        position: 'relative', overflow: 'hidden',
+        background: 'linear-gradient(135deg, #1a0a1e 0%, #0d0d1a 40%, #150a1a 100%)',
+        padding: '50px 20px 40px',
+      }}>
+        {/* Glow effects */}
+        <div style={{ position:'absolute', top:'-30%', left:'20%', width:400, height:400, background:'radial-gradient(circle, rgba(255,107,157,0.15) 0%, transparent 70%)', pointerEvents:'none' }} />
+        <div style={{ position:'absolute', top:'-20%', right:'10%', width:300, height:300, background:'radial-gradient(circle, rgba(196,69,105,0.1) 0%, transparent 70%)', pointerEvents:'none' }} />
+
+        <div style={{ maxWidth: 1000, margin: '0 auto', position: 'relative', zIndex: 1 }}>
+          {/* Hero images row — large character portraits */}
+          <div style={{
+            display: 'flex', justifyContent: 'center', gap: 16,
+            marginBottom: 32, flexWrap: 'wrap',
+          }}>
+            {heroChars.map((c, i) => (
+              <div key={c.id} style={{
+                width: i === 1 ? 180 : 150, height: i === 1 ? 220 : 190,
+                borderRadius: 20, overflow: 'hidden', position: 'relative',
+                border: '3px solid rgba(255,107,157,0.4)',
+                boxShadow: '0 8px 32px rgba(255,107,157,0.2)',
+                transform: i === 1 ? 'scale(1.05)' : 'scale(1)',
+                cursor: 'pointer',
+              }} onClick={() => { if(!user) onRequireAuth('signup'); else onChat(c); }}>
+                <img src={c.avatar_url} alt={c.name}
+                  style={{ width:'100%', height:'100%', objectFit:'cover' }}
+                  onError={e => { e.target.style.display='none'; }}
+                />
+                <div style={{
+                  position:'absolute', bottom:0, left:0, right:0,
+                  background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+                  padding: '20px 12px 12px', textAlign: 'center',
+                }}>
+                  <div style={{ fontWeight:700, fontSize:14 }}>{c.name}</div>
+                  <div style={{ fontSize:10, color:'rgba(255,255,255,0.7)' }}>{c.personality}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <h1 style={{
+            textAlign:'center', fontSize:'clamp(36px, 6vw, 58px)', fontWeight:900,
+            lineHeight:1.1, marginBottom:16, letterSpacing:-1.5,
+          }}>
+            Create your own{' '}
+            <span style={{
+              background:'linear-gradient(135deg, #ff6b9d, #f8a5c2)',
+              WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent',
+            }}>AI Companion</span>
+          </h1>
+
+          <p style={{
+            textAlign:'center', color:'#8b8ba7', fontSize:16,
+            maxWidth:480, margin:'0 auto 32px', lineHeight:1.6,
+          }}>
+            Always available, always supportive, and made just for you.
+          </p>
+
+          <div style={{ textAlign:'center' }}>
+            <button className="btn btn-primary btn-lg"
+              onClick={() => user ? onNavigate('create') : onRequireAuth('signup')}
+              style={{ padding:'16px 40px', fontSize:17, boxShadow:'0 4px 24px rgba(255,107,157,0.35)' }}>
+              {user ? '✨ Create Your AI' : 'Join Now for FREE'}
+            </button>
+          </div>
+
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:8, marginTop:18, fontSize:13, color:'#8b8ba7' }}>
+            <span style={{ color:'#ffd32a', letterSpacing:2 }}>★★★★★</span>
+            <span>Trusted by thousands worldwide</span>
+          </div>
         </div>
       </div>
 
-      {/* Category Tabs */}
-      <div className="category-tabs">
+      {/* ============ CIRCULAR AVATAR ROW (like candy.ai) ============ */}
+      <div style={{ padding:'30px 20px 10px', background:'var(--bg-primary)' }}>
+        <div style={{
+          display:'flex', justifyContent:'center', gap:20,
+          overflowX:'auto', padding:'10px 0', maxWidth:900, margin:'0 auto',
+        }}>
+          {presets.filter(c => c.category === 'Girls').slice(0, 8).map(c => (
+            <div key={c.id} style={{ textAlign:'center', flexShrink:0, cursor:'pointer' }}
+              onClick={() => { if(!user) onRequireAuth('signup'); else onChat(c); }}>
+              <div style={{
+                width:72, height:72, borderRadius:'50%', overflow:'hidden',
+                border:'3px solid rgba(255,107,157,0.4)', margin:'0 auto 6px',
+                boxShadow:'0 0 16px rgba(255,107,157,0.15)',
+              }}>
+                <img src={c.avatar_url} alt={c.name}
+                  style={{ width:'100%', height:'100%', objectFit:'cover' }}
+                  onError={e => { e.target.parentNode.style.background='linear-gradient(135deg,#ff6b9d,#c44569)'; e.target.style.display='none'; }}
+                />
+              </div>
+              <div style={{ fontSize:11, color:'#ccc', fontWeight:500 }}>{c.name}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ============ CATEGORY TABS ============ */}
+      <div className="category-tabs" style={{ paddingTop:20 }}>
         {CATEGORIES.map(cat => (
-          <button
-            key={cat}
+          <button key={cat}
             className={`chip ${category === cat ? 'active' : ''}`}
             onClick={() => setCategory(cat)}
-            style={{ padding: '9px 24px', fontSize: 13 }}
-          >
-            {cat === 'Girls' ? '👩 ' : cat === 'Guys' ? '👨 ' : '🎨 '}{cat}
+            style={{ padding:'10px 28px', fontSize:14 }}>
+            {cat === 'Girls' ? '♀ ' : cat === 'Guys' ? '♂ ' : '✿ '}{cat}
           </button>
         ))}
       </div>
 
-      {/* Companion Grid */}
-      <div className="section" style={{ paddingTop: 0 }}>
-        <div className="companion-grid">
-          {filtered.map(comp => (
-            <CompanionCard
-              key={comp.id}
-              companion={comp}
-              onChat={() => {
-                if (!user) return onRequireAuth('signup');
-                onChat(comp);
-              }}
-              onToggleSave={() => {
-                if (!user) return onRequireAuth('signup');
-                onToggleSave(comp.id);
-              }}
-              isSaved={collection?.includes(comp.id)}
-            />
-          ))}
-        </div>
+      {/* ============ COMPANION GRID ============ */}
+      <div className="section" style={{ paddingTop:8 }}>
+        {filtered.length === 0 && presets.length === 0 ? (
+          <div style={{ textAlign:'center', padding:40, color:'#8b8ba7' }}>
+            <div style={{ fontSize:48, marginBottom:12, opacity:0.5 }}>🔄</div>
+            <p>Loading companions...</p>
+          </div>
+        ) : (
+          <div className="companion-grid">
+            {filtered.map(comp => (
+              <CompanionCard key={comp.id} companion={comp}
+                onChat={() => { if(!user) return onRequireAuth('signup'); onChat(comp); }}
+                onToggleSave={() => { if(!user) return onRequireAuth('signup'); onToggleSave(comp.id); }}
+                isSaved={collection?.includes(comp.id)}
+              />
+            ))}
+            {filtered.length === 0 && (
+              <div style={{ gridColumn:'1/-1', textAlign:'center', padding:30, color:'#8b8ba7' }}>
+                No companions in this category yet.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Create CTA */}
-      <div style={{ textAlign: 'center', padding: '50px 20px 60px', background: 'linear-gradient(180deg, transparent, rgba(255,107,157,0.04))' }}>
-        <h2 style={{ fontSize: 30, fontWeight: 800, marginBottom: 12, letterSpacing: -0.5 }}>
+      {/* ============ CREATE CTA ============ */}
+      <div style={{
+        textAlign:'center', padding:'50px 20px 60px', position:'relative',
+        background:'linear-gradient(180deg, transparent, rgba(255,107,157,0.04))',
+      }}>
+        <h2 style={{ fontSize:30, fontWeight:800, marginBottom:12, letterSpacing:-0.5 }}>
           Create your own AI companion
         </h2>
-        <p className="text-muted" style={{ maxWidth: 440, margin: '0 auto 28px', fontSize: 15 }}>
+        <p style={{ color:'#8b8ba7', maxWidth:440, margin:'0 auto 28px', fontSize:15 }}>
           Shape their look, personality, and bring them to life instantly.
         </p>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={() => user ? onNavigate('create') : onRequireAuth('signup')}
-        >
+        <div style={{ display:'flex', justifyContent:'center', gap:16, flexWrap:'wrap' }}>
+          {presets.slice(0,4).map(c => (
+            <div key={c.id} style={{ width:80, height:100, borderRadius:14, overflow:'hidden', border:'2px solid rgba(255,255,255,0.1)' }}>
+              <img src={c.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}
+                onError={e => { e.target.parentNode.style.background='linear-gradient(135deg,#ff6b9d,#c44569)'; e.target.style.display='none'; }} />
+            </div>
+          ))}
+        </div>
+        <button className="btn btn-primary btn-lg" style={{ marginTop:28 }}
+          onClick={() => user ? onNavigate('create') : onRequireAuth('signup')}>
           ✨ Create Your AI
         </button>
       </div>
 
-      {/* Features */}
+      {/* ============ FEATURES ============ */}
       <div className="section">
         <h2 className="section-title text-center">Everything You Need</h2>
-        <p className="section-subtitle text-center" style={{ maxWidth: 500, margin: '0 auto 28px' }}>
-          A complete AI companion experience with all the features you'd want
+        <p className="section-subtitle text-center" style={{ maxWidth:500, margin:'0 auto 28px' }}>
+          A complete AI companion experience
         </p>
         <div className="features-grid">
           {FEATURES.map((f, i) => (
@@ -131,8 +215,8 @@ export default function HomePage({ onNavigate, onChat, onToggleSave, collection,
         </div>
       </div>
 
-      {/* FAQ */}
-      <div className="section" style={{ maxWidth: 660 }}>
+      {/* ============ FAQ ============ */}
+      <div className="section" style={{ maxWidth:660 }}>
         <h2 className="section-title text-center mb-3">Frequently Asked Questions</h2>
         {FAQS.map((faq, i) => (
           <div key={i} className="faq-item">
@@ -145,10 +229,10 @@ export default function HomePage({ onNavigate, onChat, onToggleSave, collection,
         ))}
       </div>
 
-      {/* Footer */}
-      <div style={{ textAlign: 'center', padding: '40px 20px', fontSize: 12, color: 'var(--text-muted)' }}>
+      {/* ============ FOOTER ============ */}
+      <div style={{ textAlign:'center', padding:'40px 20px', fontSize:12, color:'#5a5a78' }}>
         <p>© 2026 Aura AI — All rights reserved</p>
-        <p style={{ marginTop: 6 }}>Your conversations are private, secure, and encrypted.</p>
+        <p style={{ marginTop:6 }}>Your conversations are private, secure, and encrypted.</p>
       </div>
     </div>
   );

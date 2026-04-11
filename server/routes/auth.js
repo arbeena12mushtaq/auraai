@@ -35,7 +35,7 @@ router.post('/signup', async (req, res) => {
     res.status(201).json({ user, token });
   } catch (err) {
     console.error('Signup error:', err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: err.code === '23505' ? 'Email already registered' : 'Server error — please try again' });
   }
 });
 

@@ -116,4 +116,18 @@ router.post('/presets', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
+// Force reseed presets (admin) — use this to update avatar URLs
+router.post('/reseed-presets', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM companions WHERE is_preset = true');
+    // Reimport database init to reseed
+    const { initDatabase } = require('../config/database');
+    await initDatabase();
+    res.json({ success: true, message: 'Presets reseeded with new images' });
+  } catch (err) {
+    console.error('Reseed error:', err);
+    res.status(500).json({ error: 'Reseed failed' });
+  }
+});
+
 module.exports = router;

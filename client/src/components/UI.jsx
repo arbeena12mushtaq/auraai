@@ -35,15 +35,46 @@ export function Avatar({ name, src, size = 'md', className = '', style = {} }) {
 }
 
 export function CompanionCard({ companion, onChat, onToggleSave, isSaved, onClick }) {
+  const [imgErr, setImgErr] = useState(false);
   const handleClick = () => onClick ? onClick(companion) : onChat?.(companion);
+  const hasSrc = companion.avatar_url && !imgErr;
 
   return (
     <div className="card" onClick={handleClick} style={{ cursor: 'pointer' }}>
-      <div className="companion-card-body">
-        <div className="companion-avatar-wrap">
-          <Avatar name={companion.name} src={companion.avatar_url} size="lg" />
-          <div className="companion-online-dot" />
+      {/* Large photo area */}
+      <div style={{
+        width: '100%', height: 200, overflow: 'hidden', position: 'relative',
+        background: hasSrc ? 'transparent' : `linear-gradient(135deg, ${GRADIENTS[hashStr(companion.name) % GRADIENTS.length][0]}, ${GRADIENTS[hashStr(companion.name) % GRADIENTS.length][1]})`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {hasSrc ? (
+          <img src={companion.avatar_url} alt={companion.name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            onError={() => setImgErr(true)}
+            loading="lazy"
+          />
+        ) : (
+          <span style={{ fontSize: 56, fontWeight: 800, color: 'rgba(255,255,255,0.4)' }}>
+            {(companion.name || 'A').charAt(0)}
+          </span>
+        )}
+        {/* Online indicator */}
+        <div style={{
+          position: 'absolute', top: 10, right: 10,
+          background: 'rgba(0,0,0,0.5)', borderRadius: 20,
+          padding: '3px 10px', fontSize: 10, color: '#2ecc71',
+          display: 'flex', alignItems: 'center', gap: 4, backdropFilter: 'blur(4px)',
+        }}>
+          <span style={{ width:6, height:6, borderRadius:'50%', background:'#2ecc71', display:'inline-block' }} />
+          Online
         </div>
+        {/* Gradient overlay */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: 60,
+          background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
+        }} />
+      </div>
+      <div style={{ padding: '12px 14px 8px' }}>
         <div className="companion-name">{companion.name}</div>
         <div className="companion-tagline">{companion.tagline || companion.personality}</div>
         <div className="companion-tags">
