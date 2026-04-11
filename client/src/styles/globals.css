@@ -220,3 +220,64 @@ textarea.input { resize:vertical; min-height:70px; }
 @keyframes bounce { 0%,80%,100%{transform:scale(0);opacity:.4;} 40%{transform:scale(1);opacity:1;} }
 @keyframes msgIn { from{opacity:0;transform:translateY(8px);} to{opacity:1;transform:translateY(0);} }
 @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
+
+/* ==================== MOBILE RESPONSIVE ==================== */
+@media (max-width: 768px) {
+  :root { --sidebar-w: 0px; --topbar-h: 52px; }
+  
+  .hero-desktop { display: none !important; }
+  
+  .companion-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  
+  .section { padding: 14px; }
+  .section-title { font-size: 20px; }
+  
+  .pricing-grid { grid-template-columns: 1fr; gap: 12px; }
+  .features-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  
+  .modal { padding: 24px; margin: 10px; }
+  .modal-title { font-size: 22px; }
+  
+  .btn-lg { padding: 12px 24px; font-size: 14px; }
+  
+  .chat-header { padding: 10px 12px; }
+  .chat-messages { padding: 12px; gap: 10px; }
+  .chat-input-area { padding: 10px 12px; }
+  .message { max-width: 88%; }
+  .message-bubble { padding: 10px 14px; font-size: 13px; }
+  
+  .plan-card { padding: 20px; }
+  .plan-price { font-size: 30px; }
+  
+  .feature-card { padding: 14px; }
+  .feature-icon { font-size: 20px; margin-bottom: 6px; }
+  .feature-title { font-size: 13px; }
+  .feature-desc { font-size: 11px; }
+  
+  .table { font-size: 11px; }
+  .table th, .table td { padding: 8px 6px; }
+  
+  .stat-card { padding: 14px; }
+  .stat-value { font-size: 22px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  
+  .review-detail-grid { grid-template-columns: 1fr; gap: 8px; }
+  
+  .chip { padding: 5px 12px; font-size: 11px; }
+  
+  .card-footer button { padding: 9px; font-size: 11px; }
+  
+  .faq-question { font-size: 13px; padding: 14px 0; }
+  .faq-answer { font-size: 11px; }
+  
+  .topbar { padding: 0 12px; }
+  .sidebar-footer { padding: 10px; }
+  
+  .nav-item { padding: 9px 12px; font-size: 12px; }
+}
+
+@media (max-width: 380px) {
+  .companion-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .features-grid { grid-template-columns: 1fr; }
+  .btn-lg { padding: 11px 20px; font-size: 13px; }
+}

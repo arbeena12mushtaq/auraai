@@ -10,25 +10,44 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 function buildImagePrompt(data) {
   const gender = data.category === 'Guys' ? 'man' : 'woman';
   const isAnime = data.art_style === 'Anime';
+  const desc = (data.description || '').toLowerCase();
 
-  // OpenAI DALL-E safety: avoid "beautiful", body descriptions, age numbers
-  let prompt = isAnime
-    ? `Anime character portrait of a friendly ${gender}`
-    : `Professional studio headshot portrait of a friendly ${gender}`;
+  // Detect fantasy/supernatural characters from description
+  const isFantasy = /\b(succubus|demon|angel|fairy|elf|vampire|witch|goddess|nymph|spirit|dragon|fox girl|cat girl|bunny girl|mermaid|sorceress|enchantress|mystical|supernatural|fantasy|mythical)\b/i.test(desc);
 
-  if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
-  if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
-  if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
-  if (data.description) {
-    // Strip any potentially unsafe words from user description
-    const safeDesc = data.description.replace(/\b(sexy|hot|beautiful|gorgeous|stunning|attractive|slim|curvy|petite|busty|thicc)\b/gi, '').trim();
+  // Strip truly unsafe words but ALLOW fantasy terms
+  const safeDesc = (data.description || '')
+    .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|busty|thicc)\b/gi, '')
+    .trim();
+
+  let prompt = '';
+
+  if (isFantasy && isAnime) {
+    prompt = `Fantasy anime character illustration, ${gender}`;
+    if (data.hair_color) prompt += `, ${data.hair_color.toLowerCase()} hair`;
+    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
     if (safeDesc) prompt += `. ${safeDesc}`;
-  }
-
-  if (isAnime) {
+    prompt += '. Detailed fantasy anime art, vibrant colors, magical atmosphere, glowing effects, elegant fantasy outfit, dramatic lighting, high quality digital painting, fully clothed';
+  } else if (isFantasy) {
+    prompt = `Digital art portrait of a fantasy ${gender} character`;
+    if (data.hair_color) prompt += `, ${data.hair_color.toLowerCase()} hair`;
+    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
+    if (safeDesc) prompt += `. ${safeDesc}`;
+    prompt += '. Dramatic fantasy lighting, magical atmosphere, elegant dark fantasy outfit, glowing accents, detailed digital painting, concept art quality, fully clothed, tasteful';
+  } else if (isAnime) {
+    prompt = `Anime character portrait of a friendly ${gender}`;
+    if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
+    if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
+    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
+    if (safeDesc) prompt += `. ${safeDesc}`;
     prompt += '. Clean modern anime art, vibrant colors, detailed eyes, soft lighting, high quality digital illustration, cheerful expression, casual outfit';
   } else {
-    prompt += '. Soft natural lighting, warm color palette, genuine friendly smile, looking at camera, sharp focus, shallow depth of field, casual clothing, neutral background, high quality photograph';
+    prompt = `Professional portrait photograph of a friendly ${gender}`;
+    if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
+    if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
+    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
+    if (safeDesc) prompt += `. ${safeDesc}`;
+    prompt += '. Soft natural lighting, warm colors, genuine smile, looking at camera, sharp focus, casual clothing, high quality photograph';
   }
 
   return prompt;

@@ -46,6 +46,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/collections', require('./routes/collections'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/image', require('./routes/imageGen'));
+app.use('/api/voice', require('./routes/voice'));
 
 // Health check
 app.get('/api/health', (req, res) => {
