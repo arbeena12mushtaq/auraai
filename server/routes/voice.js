@@ -158,7 +158,6 @@ router.post('/stt', authMiddleware, async (req, res) => {
     fs.writeFileSync(tempFile, buffer);
 
     // Call OpenAI Whisper
-    const FormData = (await import('node-fetch')).default ? null : null;
     const formData = new (require('form-data'))();
     formData.append('file', fs.createReadStream(tempFile), { filename: 'audio.webm', contentType: 'audio/webm' });
     formData.append('model', 'whisper-1');
