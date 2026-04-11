@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { api, getMessagesLeft } from '../utils/api';
+import { api, getMessagesLeft, getToken } from '../utils/api';
 import { Avatar } from '../components/UI';
 
 export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, isSaved }) {
@@ -8,20 +8,21 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [initLoading, setInitLoading] = useState(true);
+  const [initLoad, setInitLoad] = useState(true);
   const [voiceOn, setVoiceOn] = useState(true);
   const [recording, setRecording] = useState(false);
+  const [recTime, setRecTime] = useState(0);
   const [avatarVideo, setAvatarVideo] = useState(null);
   const [avatarLoading, setAvatarLoading] = useState(false);
   const chatRef = useRef();
   const mediaRef = useRef();
   const chunksRef = useRef([]);
+  const timerRef = useRef();
 
   useEffect(() => {
     if (!companion) return;
-    setInitLoading(true);
-    setAvatarVideo(null);
-    api(`/chat/${companion.id}`).then(d => setMessages(d.messages || [])).catch(() => {}).finally(() => setInitLoading(false));
+    setInitLoad(true); setAvatarVideo(null);
+    api(`/chat/${companion.id}`).then(d => setMessages(d.messages || [])).catch(() => {}).finally(() => setInitLoad(false));
   }, [companion?.id]);
 
   useEffect(() => {
@@ -36,132 +37,145 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     </div>
   );
 
-  // ---- Voice generation ----
-  const playTTS = async (text) => {
+  // ==== Play TTS for a message ====
+  const playTTS = async (text, msgIdx) => {
     try {
       const d = await api('/voice/tts', { method: 'POST', body: { text, voice: companion.voice } });
       if (d.audio_url) {
-        // Add as VN message
-        setMessages(prev => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last && last.role === 'assistant' && last.content === text) {
-            last.audio_url = d.audio_url;
-          }
-          return [...updated];
-        });
+        setMessages(prev => prev.map((m, i) => i === msgIdx ? { ...m, audio_url: d.audio_url } : m));
       }
     } catch {}
   };
 
-  const generateAvatar = async (text) => {
+  // ==== Generate D-ID video ====
+  const genAvatar = async (text) => {
     setAvatarLoading(true);
     try {
       const d = await api('/voice/talking-avatar', {
-        method: 'POST',
-        body: { text, image_url: companion.avatar_url, voice: companion.voice },
+        method: 'POST', body: { text, image_url: companion.avatar_url, voice: companion.voice },
       });
-      if (d.video_url) {
-        setAvatarVideo(d.video_url);
-      }
-    } catch {
-      // Fallback handled — TTS already plays
-    }
+      if (d.video_url) setAvatarVideo(d.video_url);
+    } catch {}
     setAvatarLoading(false);
   };
 
-  // ---- Send text message ----
-  const sendMessage = async (textOverride) => {
-    const text = (textOverride || input).trim();
-    if (!text || loading) return;
+  // ==== Send text message ====
+  const sendText = async (text) => {
+    const t = (text || input).trim();
+    if (!t || loading) return;
     if (getMessagesLeft(user) <= 0) { onNavigate('pricing'); return; }
 
-    const userMsg = { role: 'user', content: text, created_at: new Date().toISOString() };
-    setMessages(prev => [...prev, userMsg]);
-    if (!textOverride) setInput('');
+    setMessages(prev => [...prev, { role: 'user', content: t, created_at: new Date().toISOString() }]);
+    if (!text) setInput('');
     setLoading(true);
 
     try {
-      const d = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: text } });
-      setMessages(prev => [...prev, d.message]);
+      const d = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: t } });
+      const aiMsg = { ...d.message };
+      setMessages(prev => {
+        const updated = [...prev, aiMsg];
+        // Auto-gen voice
+        if (voiceOn && aiMsg.content) {
+          const idx = updated.length - 1;
+          playTTS(aiMsg.content, idx);
+          genAvatar(aiMsg.content);
+        }
+        return updated;
+      });
       refreshUser();
-
-      if (voiceOn && d.message?.content) {
-        playTTS(d.message.content);
-        generateAvatar(d.message.content);
-      }
     } catch (err) {
       if (err.code === 'TRIAL_EXPIRED' || err.code === 'MESSAGE_LIMIT') onNavigate('pricing');
-      else setMessages(prev => [...prev, { role: 'assistant', content: err.error || "hey, what's on your mind? 💕", created_at: new Date().toISOString() }]);
+      else setMessages(prev => [...prev, { role: 'assistant', content: err.error || "hey what's up? 💕", created_at: new Date().toISOString() }]);
     }
     setLoading(false);
   };
 
-  // ---- Voice recording (user sends VN) ----
-  const startRecording = async () => {
+  // ==== Voice recording ====
+  const startRec = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
-      recorder.ondataavailable = e => chunksRef.current.push(e.data);
-      recorder.onstop = async () => {
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
+        clearInterval(timerRef.current);
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-
-        // Show user's VN in chat
-        const audioUrl = URL.createObjectURL(blob);
-        setMessages(prev => [...prev, { role: 'user', content: '🎤 Voice message', audio_url: audioUrl, created_at: new Date().toISOString() }]);
-
-        // Transcribe with Whisper
-        setLoading(true);
-        try {
-          const reader = new FileReader();
-          reader.onload = async () => {
-            const base64 = reader.result.split(',')[1];
-            try {
-              const sttData = await api('/voice/stt', { method: 'POST', body: { audio_data: base64 } });
-              if (sttData.text) {
-                // Send transcribed text as chat message
-                await sendMessage(sttData.text);
-              }
-            } catch {
-              setLoading(false);
-            }
-          };
-          reader.readAsDataURL(blob);
-        } catch {
-          setLoading(false);
-        }
+        handleVoiceNote(blob);
       };
       mediaRef.current = recorder;
       recorder.start();
       setRecording(true);
-    } catch (err) {
-      alert('Microphone access denied. Please allow microphone access to send voice notes.');
+      setRecTime(0);
+      timerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+    } catch {
+      alert('Please allow microphone access to send voice notes.');
     }
   };
 
-  const stopRecording = () => {
+  const stopRec = () => {
     if (mediaRef.current && recording) {
       mediaRef.current.stop();
       setRecording(false);
     }
   };
 
-  const fmt = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const handleVoiceNote = async (blob) => {
+    // Show user's VN
+    const localUrl = URL.createObjectURL(blob);
+    setMessages(prev => [...prev, {
+      role: 'user', content: '🎤 Voice note', audio_url: localUrl, created_at: new Date().toISOString(),
+    }]);
+
+    setLoading(true);
+    try {
+      // Upload audio file for STT
+      const formData = new FormData();
+      formData.append('audio', blob, 'voice.webm');
+
+      const token = getToken();
+      const res = await fetch('/api/voice/stt', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData,
+      });
+      const sttData = await res.json();
+
+      if (sttData.text && sttData.text.trim()) {
+        // Send transcribed text
+        await sendText(sttData.text);
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'assistant', content: "I couldn't catch that, could you try again? 🎤",
+          created_at: new Date().toISOString(),
+        }]);
+        setLoading(false);
+      }
+    } catch {
+      setMessages(prev => [...prev, {
+        role: 'assistant', content: "hmm I couldn't hear you clearly... try typing instead? 💬",
+        created_at: new Date().toISOString(),
+      }]);
+      setLoading(false);
+    }
+  };
+
+  const fmtTime = s => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  const fmtTs = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
     <div className="chat-container">
-      {/* ---- Header ---- */}
+      {/* Header */}
       <div className="chat-header">
-        <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ fontSize: 18, padding: '4px 8px' }}>←</button>
+        <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ fontSize: 18, padding: '4px 6px' }}>←</button>
         <Avatar name={companion.name} src={companion.avatar_url} size="sm" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>{companion.name}</div>
           <div style={{ fontSize: 10, color: 'var(--green)' }}>● Online</div>
         </div>
         <button className={`btn btn-sm ${voiceOn ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setVoiceOn(!voiceOn)} style={{ padding: '4px 8px', fontSize: 14 }}>
+          onClick={() => setVoiceOn(!voiceOn)} style={{ padding: '4px 8px', fontSize: 13 }}
+          title={voiceOn ? 'Voice & Video ON' : 'Text only'}>
           {voiceOn ? '🔊' : '🔇'}
         </button>
         <button className="btn btn-ghost" onClick={() => onToggleSave?.(companion.id)}
@@ -170,33 +184,28 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         </button>
       </div>
 
-      {/* ---- Talking Avatar Video ---- */}
+      {/* Talking avatar video */}
       {(avatarVideo || avatarLoading) && (
-        <div style={{
-          padding: 12, borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.4)',
-          display: 'flex', justifyContent: 'center', flexShrink: 0,
-        }}>
+        <div style={{ padding: 10, borderBottom: '1px solid var(--border)', background: '#000', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
           {avatarVideo ? (
-            <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', maxWidth: 260 }}>
-              <video src={avatarVideo} autoPlay playsInline
-                onEnded={() => setAvatarVideo(null)}
-                style={{ width: '100%', borderRadius: 16, display: 'block' }} />
+            <div style={{ position: 'relative', maxWidth: 300, width: '100%' }}>
+              <video src={avatarVideo} autoPlay playsInline onEnded={() => setAvatarVideo(null)}
+                style={{ width: '100%', borderRadius: 14, display: 'block' }} />
               <button onClick={() => setAvatarVideo(null)}
-                style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 11 }}>✕</button>
+                style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.7)', border: 'none', color: '#fff', borderRadius: '50%', width: 26, height: 26, cursor: 'pointer', fontSize: 11 }}>✕</button>
             </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text2)', fontSize: 12, padding: 6 }}>
-              <div style={{ width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--pink)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-              {companion.name} is preparing a video response...
-              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text2)', fontSize: 12, padding: 8 }}>
+              <div className="spin-loader" />
+              {companion.name} is recording a video...
             </div>
           )}
         </div>
       )}
 
-      {/* ---- Messages ---- */}
+      {/* Messages */}
       <div className="chat-messages" ref={chatRef}>
-        {initLoading ? (
+        {initLoad ? (
           <div className="flex-center" style={{ flex: 1, color: 'var(--text2)' }}>Loading...</div>
         ) : (
           <>
@@ -204,42 +213,39 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
               <div style={{ textAlign: 'center', padding: '30px 16px', color: 'var(--text2)' }}>
                 <Avatar name={companion.name} src={companion.avatar_url} size="xl" style={{ margin: '0 auto 14px' }} />
                 <h3 style={{ color: 'var(--text)', marginBottom: 4 }}>{companion.name}</h3>
-                <p style={{ fontSize: 12 }}>{companion.tagline || companion.personality}</p>
-                <p style={{ fontSize: 11, marginTop: 8 }}>
-                  Send a message or hold the 🎤 to send a voice note!
-                  {voiceOn && ' Voice replies are ON 🔊'}
-                </p>
+                <p style={{ fontSize: 12, marginBottom: 8 }}>{companion.tagline || companion.personality}</p>
+                <p style={{ fontSize: 11 }}>Type a message or tap 🎤 to send a voice note</p>
               </div>
             )}
 
             {messages.map((msg, i) => (
               <div key={i} className={`message ${msg.role === 'user' ? 'user' : 'ai'}`}>
                 {msg.role !== 'user' && <Avatar name={companion.name} src={companion.avatar_url} size="xs" />}
-                <div style={{ maxWidth: '100%' }}>
-                  {/* Text bubble */}
+                <div style={{ maxWidth: '100%', minWidth: 0 }}>
+                  {/* Text */}
                   <div className="message-bubble">{msg.content}</div>
 
-                  {/* Audio player (VN bubble) */}
+                  {/* VN audio player */}
                   {msg.audio_url && (
                     <div style={{
-                      marginTop: 4, padding: '6px 10px', borderRadius: 12,
-                      background: msg.role === 'user' ? 'rgba(232,67,126,0.15)' : 'rgba(255,255,255,0.04)',
-                      border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8,
+                      marginTop: 4, borderRadius: 14, overflow: 'hidden',
+                      background: msg.role === 'user' ? 'rgba(232,67,126,0.15)' : 'var(--bg4)',
+                      border: '1px solid var(--border)', padding: '6px 8px',
+                      display: 'flex', alignItems: 'center', gap: 6,
                     }}>
-                      <span style={{ fontSize: 14 }}>🎤</span>
+                      <span style={{ fontSize: 16 }}>🎤</span>
                       <audio src={msg.audio_url} controls preload="none"
-                        style={{ height: 32, flex: 1, maxWidth: 220 }} />
+                        style={{ height: 28, flex: 1, minWidth: 0, maxWidth: 200 }} />
                     </div>
                   )}
 
-                  {/* Time + play button */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, padding: '0 4px' }}>
-                    <span style={{ fontSize: 9, color: 'var(--text3)' }}>{fmt(msg.created_at)}</span>
+                  {/* Timestamp + replay button */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, padding: '0 4px' }}>
+                    <span style={{ fontSize: 9, color: 'var(--text3)' }}>{fmtTs(msg.created_at)}</span>
                     {msg.role === 'assistant' && !msg.audio_url && voiceOn && (
-                      <button onClick={() => playTTS(msg.content)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text2)', padding: 0 }}>
-                        🔊
-                      </button>
+                      <button onClick={() => playTTS(msg.content, i)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--pink2)', padding: 0 }}
+                        title="Play voice">🔊 Play</button>
                     )}
                   </div>
                 </div>
@@ -249,54 +255,52 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
             {loading && (
               <div className="message ai">
                 <Avatar name={companion.name} src={companion.avatar_url} size="xs" />
-                <div className="typing-dots">
-                  <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
-                </div>
+                <div className="typing-dots"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></div>
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* ---- Input Area ---- */}
+      {/* Input area */}
       <div className="chat-input-area">
-        {/* Voice record button */}
-        <button
-          className={`btn ${recording ? 'btn-primary' : 'btn-secondary'}`}
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          style={{ padding: '8px 12px', fontSize: 18, flexShrink: 0 }}
-          title={recording ? 'Release to send' : 'Hold to record'}
-        >
-          {recording ? '⏹' : '🎤'}
-        </button>
-
-        <input className="input" value={input} onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          placeholder={recording ? 'Recording...' : `Message ${companion.name}...`}
-          style={{ flex: 1 }} disabled={loading || recording} />
-
-        <button className="btn btn-primary" onClick={() => sendMessage()} disabled={loading || !input.trim() || recording}>
-          Send
-        </button>
+        {recording ? (
+          /* Recording UI */
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--red)', animation: 'pulse4 1s infinite' }} />
+              <span style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600 }}>Recording {fmtTime(recTime)}</span>
+            </div>
+            <button className="btn btn-secondary btn-sm" onClick={() => { mediaRef.current?.stop(); setRecording(false); clearInterval(timerRef.current); chunksRef.current = []; }}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={stopRec} style={{ padding: '8px 16px' }}>
+              ✓ Send
+            </button>
+          </div>
+        ) : (
+          /* Normal input */
+          <>
+            <button className="btn btn-secondary" onClick={startRec}
+              style={{ padding: '8px 12px', fontSize: 16, flexShrink: 0 }} title="Record voice note">
+              🎤
+            </button>
+            <input className="input" value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendText()}
+              placeholder={`Message ${companion.name}...`}
+              style={{ flex: 1 }} disabled={loading} />
+            <button className="btn btn-primary" onClick={() => sendText()} disabled={loading || !input.trim()}>
+              Send
+            </button>
+          </>
+        )}
       </div>
 
-      {/* Recording indicator */}
-      {recording && (
-        <div style={{
-          position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
-          background: 'var(--red)', color: '#fff', padding: '8px 20px', borderRadius: 20,
-          fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8,
-          boxShadow: '0 4px 20px rgba(214,56,100,0.4)', zIndex: 100,
-          animation: 'pulse4 1s infinite',
-        }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff', animation: 'pulse4 1s infinite' }} />
-          Recording — release to send
-          <style>{`@keyframes pulse4{0%,100%{opacity:1;}50%{opacity:0.6;}}`}</style>
-        </div>
-      )}
+      <style>{`
+        .spin-loader { width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--pink); border-radius:50%; animation:spin 0.7s linear infinite; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        @keyframes pulse4 { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+      `}</style>
     </div>
   );
 }
