@@ -25,7 +25,7 @@ router.post('/signup', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO users (email, name, password_hash, trial_start) 
        VALUES ($1, $2, $3, NOW()) 
-       RETURNING id, email, name, plan, messages_used, trial_start, is_admin, created_at`,
+       RETURNING id, email, name, plan, messages_used, tokens, trial_start, is_admin, created_at`,
       [email.toLowerCase(), name, hash]
     );
 

@@ -318,11 +318,16 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
   }
 });
 
-// Generate video (costs tokens, falls back to image for now)
+// Generate video with Runway Gen-4 Turbo (costs tokens)
 router.post('/generate-video', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.body;
     if (!companionId) return res.status(400).json({ error: 'companionId required' });
+
+    const runwayKey = process.env.RUNWAYML_API_SECRET || process.env.RUNWAY_API_KEY;
+    if (!runwayKey) {
+      return res.status(400).json({ error: 'Video generation not configured. RUNWAYML_API_SECRET needed.' });
+    }
 
     const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
     if (comp.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
@@ -330,7 +335,7 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Video of ${companion.name}`);
 
-    // Generate a scene image first (same flow as image)
+    // Step 1: Generate a scene image
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
     const { setting, outfit } = getRandomScene();
     const prompt = `Ultra realistic photograph of a beautiful young ${gender}, ${setting}, ${outfit}. Photorealistic, high resolution, candid pose`;
@@ -340,43 +345,144 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     if (!sceneBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.video, req.user.id]);
-      return res.status(500).json({ error: 'Video generation failed. Tokens refunded.' });
+      return res.status(500).json({ error: 'Image generation failed. Tokens refunded.' });
     }
 
     const sceneFilename = `vscene-${Date.now()}.png`;
     fs.writeFileSync(path.join(uploadDir, sceneFilename), sceneBuffer);
 
-    // Face swap
-    let finalFilename = sceneFilename;
+    // Step 2: Face swap if available
+    let finalImgFilename = sceneFilename;
     if (companion.avatar_url && process.env.REPLICATE_API_TOKEN) {
       const sceneUrl = getPublicUrl(req, `/uploads/${sceneFilename}`);
       const avatarUrl = getPublicUrl(req, companion.avatar_url);
       const swappedBuffer = await faceSwap(sceneUrl, avatarUrl);
       if (swappedBuffer) {
-        finalFilename = `vswapped-${Date.now()}.png`;
-        fs.writeFileSync(path.join(uploadDir, finalFilename), swappedBuffer);
+        finalImgFilename = `vswapped-${Date.now()}.png`;
+        fs.writeFileSync(path.join(uploadDir, finalImgFilename), swappedBuffer);
         try { fs.unlinkSync(path.join(uploadDir, sceneFilename)); } catch {}
       }
     }
 
-    // TODO: When you add RUNWAY_API_KEY or LUMA_API_KEY, convert the image to video here
-    // For now, return the face-swapped image as fallback
+    // Step 3: Convert image to video using Runway Gen-4 Turbo
+    const imageForVideo = fs.readFileSync(path.join(uploadDir, finalImgFilename));
+    const dataUri = `data:image/png;base64,${imageForVideo.toString('base64')}`;
 
-    const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
-    if (refund > 0) {
-      await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
+    console.log('🎬 Starting Runway Gen-4 Turbo video generation...');
+
+    // Create task
+    const createRes = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${runwayKey}`,
+        'X-Runway-Version': '2024-11-06',
+      },
+      body: JSON.stringify({
+        model: 'gen4_turbo',
+        promptImage: dataUri,
+        promptText: `${gender} gently smiling, subtle natural movement, soft breeze, cinematic lighting, photorealistic`,
+        ratio: '720:1280',
+        duration: 5,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      console.error('Runway create error:', createRes.status, errText.substring(0, 300));
+      // Fallback to image
+      const finalUrl = `/uploads/${finalImgFilename}`;
+      await pool.query(
+        `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
+        [req.user.id, companionId, '📸', finalUrl]
+      );
+      // Partial refund (image was created, video failed)
+      const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
+      if (refund > 0) await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
+      return res.json({ image_url: finalUrl, video_url: null, caption: '📸', note: 'Runway error, showing image instead.' });
     }
 
-    const finalUrl = `/uploads/${finalFilename}`;
+    const taskData = await createRes.json();
+    const taskId = taskData.id;
+    console.log(`🎬 Runway task created: ${taskId}`);
+
+    // Poll for result (max 120 seconds)
+    let videoUrl = null;
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+
+      const pollRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${runwayKey}`,
+          'X-Runway-Version': '2024-11-06',
+        },
+      });
+
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+
+      if (pollData.status === 'SUCCEEDED') {
+        videoUrl = pollData.output?.[0] || pollData.output?.video || pollData.artifactUrl;
+        // Try various output formats
+        if (!videoUrl && Array.isArray(pollData.output)) videoUrl = pollData.output[0];
+        if (!videoUrl && pollData.output?.url) videoUrl = pollData.output.url;
+        console.log('✅ Runway video completed:', videoUrl?.substring(0, 100));
+        break;
+      }
+
+      if (pollData.status === 'FAILED') {
+        console.error('Runway task failed:', pollData.failure || pollData.failureCode);
+        break;
+      }
+
+      // Still running
+      console.log(`🎬 Runway polling... status: ${pollData.status} (${i + 1}/40)`);
+    }
+
+    if (videoUrl) {
+      // Download video and save locally
+      try {
+        const videoRes = await fetch(videoUrl);
+        if (videoRes.ok) {
+          const videoBuf = Buffer.from(await videoRes.arrayBuffer());
+          const videoFilename = `video-${Date.now()}.mp4`;
+          fs.writeFileSync(path.join(uploadDir, videoFilename), videoBuf);
+          const localVideoUrl = `/uploads/${videoFilename}`;
+
+          await pool.query(
+            `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
+            [req.user.id, companionId, '🎬', localVideoUrl]
+          );
+
+          // Clean up scene image
+          try { fs.unlinkSync(path.join(uploadDir, finalImgFilename)); } catch {}
+
+          console.log(`✅ Video saved: ${videoFilename}`);
+          return res.json({ video_url: localVideoUrl, caption: '🎬' });
+        }
+      } catch (e) {
+        console.error('Video download error:', e.message);
+      }
+
+      // If download failed, return the remote URL
+      await pool.query(
+        `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
+        [req.user.id, companionId, '🎬', videoUrl]
+      );
+      return res.json({ video_url: videoUrl, caption: '🎬' });
+    }
+
+    // Video generation failed, fallback to image
+    console.log('⚠️ Runway timed out or failed, falling back to image');
+    const finalUrl = `/uploads/${finalImgFilename}`;
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
       [req.user.id, companionId, '📸', finalUrl]
     );
+    const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
+    if (refund > 0) await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
 
-    res.json({
-      image_url: finalUrl, video_url: null, caption: '📸',
-      note: 'Video requires RUNWAY_API_KEY. Showing face-swapped image instead. Partial token refund applied.',
-    });
+    res.json({ image_url: finalUrl, video_url: null, caption: '📸', note: 'Video timed out, showing image.' });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video gen error:', err);
