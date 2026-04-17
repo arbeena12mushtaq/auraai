@@ -184,7 +184,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                 </div>
               </>
             )}
-            <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImageUpload} />
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageUpload} />
           </div>
 
           {previewSrc && (

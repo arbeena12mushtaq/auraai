@@ -489,6 +489,24 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         }
 
         @keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Mobile responsive */
+        @media (max-width: 768px) {
+          .candy-messages { padding: 10px 12px; }
+          .candy-msg { max-width: 88%; }
+          .candy-bubble { padding: 8px 12px; }
+          .candy-bubble-text { font-size: 13px; }
+          .candy-media-img, .candy-media-video { max-width: 220px; }
+          .candy-header { padding: 8px 10px; gap: 8px; }
+          .candy-header-name { font-size: 14px; }
+          .candy-input-bar { padding: 8px 10px; }
+          .candy-action-row { flex-wrap: wrap; gap: 6px; }
+          .candy-action-label { font-size: 11px; width: 100%; }
+          .candy-action-btn { font-size: 11px; padding: 5px 10px; }
+          .candy-media-loading { min-width: 200px; padding: 12px 16px; }
+          .candy-msg-avatar { width: 26px; height: 26px; }
+          .candy-msg-avatar img { width: 26px; height: 26px; }
+        }
       `}</style>
     </div>
   );

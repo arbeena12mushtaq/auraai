@@ -17,10 +17,24 @@ router.post('/create-checkout', authMiddleware, async (req, res) => {
     if (!PLANS[plan]) return res.status(400).json({ error: 'Invalid plan' });
 
     const stripeKey = process.env.STRIPE_SECRET_KEY;
+    console.log('💳 Stripe key check:', stripeKey ? `found (${stripeKey.substring(0, 8)}...)` : 'NOT FOUND');
     if (!stripeKey || stripeKey === 'your-stripe-key') {
-      // No Stripe key = reject, don't silently activate
+      // If user is admin, allow demo mode
+      const adminCheck = await pool.query('SELECT is_admin FROM users WHERE id = $1', [req.user.id]);
+      if (adminCheck.rows[0]?.is_admin) {
+        console.log('⚠️ No Stripe key — admin demo mode');
+        await pool.query(
+          'UPDATE users SET plan = $1, plan_started_at = NOW(), messages_used = 0, tokens = tokens + $3 WHERE id = $2',
+          [plan, req.user.id, PLANS[plan].tokens]
+        );
+        await pool.query(
+          'INSERT INTO payments (user_id, amount, plan, payment_method, payment_id, status) VALUES ($1,$2,$3,$4,$5,$6)',
+          [req.user.id, PLANS[plan].priceAmount / 100, plan, 'admin-demo', `demo_${Date.now()}`, 'completed']
+        );
+        return res.json({ demo: true, success: true });
+      }
       return res.status(400).json({
-        error: 'Payment system not configured. Please set STRIPE_SECRET_KEY.',
+        error: 'Payment system not configured yet. Contact support.',
         demo: false,
       });
     }
