@@ -23,9 +23,6 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Stripe webhook needs raw body — mount BEFORE json parser catches it
-app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), require('./routes/payments').webhookHandler || ((req, res) => res.json({ received: true })));
-
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -53,7 +50,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve React frontend in production
+// Serve React frontend
 const clientBuildPath = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientBuildPath));
 app.get('*', (req, res) => {
@@ -62,13 +59,12 @@ app.get('*', (req, res) => {
   }
 });
 
-// Start server
 async function start() {
   try {
     await initDatabase();
+    console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`\n🚀 Aura AI Server running on port ${PORT}`);
-      console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🚀 Aura AI Server running on port ${PORT}`);
       console.log(`🔗 http://localhost:${PORT}\n`);
     });
   } catch (err) {

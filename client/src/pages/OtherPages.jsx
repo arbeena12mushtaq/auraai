@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, PLANS, getPlanInfo } from '../utils/api';
+import { api, PLANS, getPlanInfo, TOKEN_COSTS } from '../utils/api';
 import { Avatar, CompanionCard, EmptyState, LoadingSpinner } from '../components/UI';
 import { useAuth } from '../hooks/useAuth';
 
@@ -136,7 +136,6 @@ export function PricingPage({ onRequireAuth }) {
     const payment = params.get('payment');
     const plan = params.get('plan');
     if (payment === 'success' && plan && user) {
-      // Confirm payment on backend
       api('/payments/confirm', { method: 'POST', body: { plan } })
         .then(() => { refreshUser(); window.history.replaceState({}, '', '/'); })
         .catch(() => {});
@@ -148,26 +147,23 @@ export function PricingPage({ onRequireAuth }) {
     if (user.plan === planId) return;
     setLoading(planId);
     try {
-      // Try Stripe Checkout first
       const data = await api('/payments/create-checkout', { method: 'POST', body: { plan: planId } });
       if (data.url) {
-        // Redirect to Stripe payment page
         window.location.href = data.url;
         return;
       }
-      if (data.demo) {
-        // Demo mode — no Stripe key configured
-        await refreshUser();
-        alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
-      }
     } catch (err) {
-      // Fallback to demo subscribe
-      try {
-        await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
-        await refreshUser();
-        alert(`Successfully subscribed to ${getPlanInfo(planId).name} plan!`);
-      } catch (err2) {
-        alert(err2.error || 'Payment failed');
+      // If Stripe not configured and user is admin, allow demo
+      if (user.is_admin) {
+        try {
+          await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
+          await refreshUser();
+          alert(`Admin demo: activated ${getPlanInfo(planId).name} plan with ${getPlanInfo(planId).tokens} tokens!`);
+        } catch (err2) {
+          alert(err2.error || 'Failed');
+        }
+      } else {
+        alert(err.error || 'Payment system not configured yet. Coming soon!');
       }
     }
     setLoading(null);
@@ -177,7 +173,7 @@ export function PricingPage({ onRequireAuth }) {
     <div className="section" style={{ maxWidth: 960 }}>
       <h2 className="section-title text-center">Choose Your Plan</h2>
       <p className="section-subtitle text-center" style={{ maxWidth: 460, margin: '0 auto 36px' }}>
-        Unlock the full Aura AI experience with a plan that fits you
+        Unlock AI image generation, video scenes, and unlimited messaging
       </p>
 
       <div className="pricing-grid">
@@ -192,9 +188,11 @@ export function PricingPage({ onRequireAuth }) {
             <div className="plan-features">
               ✦ {plan.companions} companion slot{plan.companions > 1 ? 's' : ''}<br />
               ✦ Full text chat<br />
-              {plan.voice && <>✦ Voice chat enabled<br /></>}
+              ✦ 🪙 {plan.tokens} tokens/month<br />
+              {plan.images && <>✦ 📸 AI Image generation ({TOKEN_COSTS.image} tokens each)<br /></>}
+              {plan.videos && <>✦ 🎬 AI Video generation ({TOKEN_COSTS.video} tokens each)<br /></>}
+              {plan.voice && <>✦ 🎤 Voice messages<br /></>}
               ✦ Chat history saved<br />
-              ✦ Content safety filter<br />
               ✦ Priority support
             </div>
             <button
@@ -208,8 +206,14 @@ export function PricingPage({ onRequireAuth }) {
         ))}
       </div>
 
-      <div className="text-center mt-3" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-        🔒 Secure payments via Stripe & PayPal • Cancel anytime • Discreet billing
+      {user && (
+        <div className="text-center mt-3" style={{ fontSize: 13, color: 'var(--text2)' }}>
+          🪙 Your tokens: <strong>{user.tokens || 0}</strong>
+        </div>
+      )}
+
+      <div className="text-center mt-2" style={{ fontSize: 12, color: 'var(--text3)' }}>
+        🔒 Secure payments via Stripe • Cancel anytime • Discreet billing
       </div>
     </div>
   );

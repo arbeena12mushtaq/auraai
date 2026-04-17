@@ -77,7 +77,7 @@ router.get('/me', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, email, name, avatar_url, plan, messages_used, messages_reset_at, 
-              trial_start, is_admin, created_at 
+              tokens, trial_start, is_admin, created_at 
        FROM users WHERE id = $1`,
       [req.user.id]
     );

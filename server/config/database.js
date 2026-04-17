@@ -30,6 +30,7 @@ async function initDatabase() {
           plan_started_at TIMESTAMPTZ,
           messages_used INTEGER DEFAULT 0,
           messages_reset_at TIMESTAMPTZ DEFAULT NOW(),
+          tokens INTEGER DEFAULT 0,
           trial_start TIMESTAMPTZ DEFAULT NOW(),
           is_admin BOOLEAN DEFAULT FALSE,
           stripe_customer_id VARCHAR(255),
@@ -66,6 +67,8 @@ async function initDatabase() {
           companion_id UUID REFERENCES companions(id) ON DELETE CASCADE,
           role VARCHAR(20) NOT NULL,
           content TEXT NOT NULL,
+          type VARCHAR(20) DEFAULT 'text',
+          media_url TEXT,
           created_at TIMESTAMPTZ DEFAULT NOW()
         );
 
@@ -89,14 +92,32 @@ async function initDatabase() {
           created_at TIMESTAMPTZ DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS token_ledger (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          amount INTEGER NOT NULL,
+          action VARCHAR(50) NOT NULL,
+          description TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_user_companion ON messages(user_id, companion_id);
         CREATE INDEX IF NOT EXISTS idx_companions_user ON companions(user_id);
         CREATE INDEX IF NOT EXISTS idx_companions_preset ON companions(is_preset);
         CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id);
+        CREATE INDEX IF NOT EXISTS idx_token_ledger_user ON token_ledger(user_id);
       `);
 
+      // Add tokens column if missing (migration for existing DBs)
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS tokens INTEGER DEFAULT 0;
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'text';
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
+      `).catch(() => {});
+
+      // Create token_ledger if not exists (already in CREATE above, this is safe)
+
       // Seed preset companions
-      // Using randomuser.me and pravatar.cc — these ALWAYS return real face images
       const presetCount = await client.query('SELECT COUNT(*) FROM companions WHERE is_preset = true');
       if (parseInt(presetCount.rows[0].count) === 0) {
         const presets = [
@@ -134,11 +155,14 @@ async function initDatabase() {
         const bcrypt = require('bcryptjs');
         const hash = await bcrypt.hash('admin123', 10);
         await client.query(
-          `INSERT INTO users (email, name, password_hash, is_admin, plan) VALUES ('admin@aura.ai', 'Admin', $1, true, 'premium')`,
+          `INSERT INTO users (email, name, password_hash, is_admin, plan, tokens) VALUES ('admin@aura.ai', 'Admin', $1, true, 'premium', 500)`,
           [hash]
         );
         console.log('✅ Created admin user (admin@aura.ai / admin123)');
       }
+
+      // Give existing admin users tokens if they have 0
+      await client.query(`UPDATE users SET tokens = 500 WHERE is_admin = true AND (tokens IS NULL OR tokens = 0)`).catch(() => {});
 
       console.log('✅ Database initialized successfully');
       client.release();
