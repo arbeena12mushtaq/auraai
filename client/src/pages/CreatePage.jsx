@@ -3,15 +3,9 @@ import { useAuth } from '../hooks/useAuth';
 import { api, getCompanionSlots } from '../utils/api';
 import { Avatar } from '../components/UI';
 
-const ETHNICITIES = ['Caucasian', 'Latina', 'Asian', 'African', 'Arab', 'Mixed'];
-const EYE_COLORS = ['Brown', 'Blue', 'Green', 'Hazel', 'Gray'];
-const HAIR_STYLES = ['Straight', 'Wavy', 'Curly', 'Bangs', 'Pixie', 'Long'];
-const HAIR_COLORS = ['Black', 'Brown', 'Blonde', 'Red', 'Pink', 'White', 'Purple'];
-const BODY_TYPES = ['Slim', 'Athletic', 'Curvy', 'Petite', 'Average'];
 const PERSONALITIES = ['Sweet & Caring', 'Bold & Confident', 'Shy & Gentle', 'Witty & Playful', 'Wise & Calm', 'Energetic & Fun'];
-const HOBBIES = ['Reading', 'Gaming', 'Cooking', 'Yoga', 'Music', 'Art', 'Travel', 'Fitness', 'Dancing', 'Photography'];
 const VOICES = ['Soft & Gentle', 'Warm & Rich', 'Bright & Cheerful', 'Calm & Soothing', 'Deep & Confident'];
-const AGES = ['20-24', '25-29', '30-35'];
+const HOBBIES = ['Reading', 'Gaming', 'Cooking', 'Yoga', 'Music', 'Art', 'Travel', 'Fitness', 'Dancing', 'Photography'];
 
 export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 }) {
   const { user, refreshUser } = useAuth();
@@ -22,9 +16,8 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
   const fileRef = useRef();
 
   const [form, setForm] = useState({
-    name: '', category: 'Girls', art_style: 'Realistic', ethnicity: 'Caucasian',
-    age_range: '20-24', eye_color: 'Brown', hair_style: 'Straight', hair_color: 'Black',
-    body_type: 'Slim', personality: 'Sweet & Caring', voice: 'Soft & Gentle',
+    name: '', category: 'Girls', art_style: 'Realistic',
+    personality: 'Sweet & Caring', voice: 'Soft & Gentle',
     hobbies: [], description: '', avatarFile: null, avatarPreview: null,
     generatedAvatarUrl: null,
   });
@@ -57,17 +50,19 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
   };
 
   const handleGenerateImage = async () => {
+    if (!form.description.trim()) {
+      setError('Please write a description first so we can generate an avatar.');
+      return;
+    }
     setGenerating(true);
     setError('');
     try {
       const data = await api('/image/generate', {
         method: 'POST',
         body: {
-          category: form.category, art_style: form.art_style,
-          ethnicity: form.ethnicity, age_range: form.age_range,
-          eye_color: form.eye_color, hair_style: form.hair_style,
-          hair_color: form.hair_color, body_type: form.body_type,
-          personality: form.personality, description: form.description,
+          category: form.category,
+          art_style: form.art_style,
+          description: form.description,
         },
       });
       if (data.avatar_url) {
@@ -83,6 +78,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
 
   const handleCreate = async () => {
     if (!form.name.trim()) return setError('Please give your companion a name');
+    if (!form.description.trim()) return setError('Please write a description for your companion');
     setLoading(true);
     setError('');
     try {
@@ -90,12 +86,6 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
       formData.append('name', form.name);
       formData.append('category', form.category);
       formData.append('art_style', form.art_style);
-      formData.append('ethnicity', form.ethnicity);
-      formData.append('age_range', form.age_range);
-      formData.append('eye_color', form.eye_color);
-      formData.append('hair_style', form.hair_style);
-      formData.append('hair_color', form.hair_color);
-      formData.append('body_type', form.body_type);
       formData.append('personality', form.personality);
       formData.append('voice', form.voice);
       formData.append('hobbies', JSON.stringify(form.hobbies));
@@ -122,30 +112,45 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
   return (
     <div className="section" style={{ maxWidth: 640 }}>
       <h2 className="section-title">Create Your Companion</h2>
-      <p className="section-subtitle">Step {step} of 4 — {slotsLeft} slot{slotsLeft !== 1 ? 's' : ''} remaining</p>
+      <p className="section-subtitle">Step {step} of 3 — {slotsLeft} slot{slotsLeft !== 1 ? 's' : ''} remaining</p>
 
       <div className="progress-bar">
-        {[1,2,3,4].map(s => <div key={s} className={`progress-step ${s <= step ? 'active' : ''}`} />)}
+        {[1,2,3].map(s => <div key={s} className={`progress-step ${s <= step ? 'active' : ''}`} />)}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      {/* ===== STEP 1: Style & Image ===== */}
+      {/* ===== STEP 1: Name, Description & Avatar ===== */}
       {step === 1 && (
         <div>
-          <h3 style={{ marginBottom: 16, fontSize: 18 }}>Style & Image</h3>
-          <div className="form-label">Character Type</div>
+          <h3 style={{ marginBottom: 16, fontSize: 18 }}>Describe Your Companion</h3>
+
+          <div className="form-label">Name *</div>
+          <input className="input" placeholder="Give your companion a name"
+            value={form.name} onChange={e => set('name', e.target.value)} />
+
+          <div className="form-label" style={{ marginTop: 16 }}>Character Type</div>
           <div className="chip-group mb-2">
             {['Girls', 'Guys', 'Anime'].map(s => <Chip key={s} value={s} selected={form.category===s} onClick={() => set('category', s)} />)}
           </div>
+
           <div className="form-label">Art Style</div>
           <div className="chip-group mb-2">
             {['Realistic', 'Anime'].map(s => <Chip key={s} value={s} selected={form.art_style===s} onClick={() => set('art_style', s)} />)}
           </div>
 
+          <div className="form-label" style={{ marginTop: 16 }}>Description *</div>
+          <textarea className="input" style={{ minHeight: 120 }}
+            placeholder={"Describe how your companion looks and who they are.\n\ne.g. 'A cheerful woman with long wavy brown hair, freckles, and green eyes. She has a warm smile and loves wearing cozy sweaters. She's the kind of person who lights up a room.'"}
+            value={form.description} onChange={e => set('description', e.target.value)} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            This description will be used to generate the avatar and shape their personality.
+          </div>
+
+          {/* Avatar area */}
           <div style={{
             border: '2px dashed rgba(255,107,157,0.25)', borderRadius: 'var(--radius-lg)',
-            padding: 28, textAlign: 'center', marginBottom: 16, background: 'rgba(255,255,255,0.02)',
+            padding: 28, textAlign: 'center', marginTop: 20, background: 'rgba(255,255,255,0.02)',
           }}>
             {previewSrc ? (
               <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -154,29 +159,27 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                   border: '3px solid var(--accent)', boxShadow: 'var(--shadow-glow)',
                 }} />
                 <button className="btn btn-ghost btn-sm" type="button"
-                  style={{ position: 'absolute', top: -6, right: -6, background: 'var(--bg-card)', borderRadius: '50%', width: 26, height: 26, padding: 0, fontSize: 13 }}
-                  onClick={() => { set('avatarPreview', null); set('avatarFile', null); set('generatedAvatarUrl', null); }}>
-                  ✕
-                </button>
-                {form.generatedAvatarUrl && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--success)' }}>✓ AI Generated</div>}
+                  onClick={() => { set('avatarPreview', null); set('avatarFile', null); set('generatedAvatarUrl', null); }}
+                  style={{ position: 'absolute', top: -4, right: -4, background: 'var(--bg3)', borderRadius: '50%', width: 24, height: 24, padding: 0, fontSize: 12, lineHeight: '24px' }}>✕</button>
               </div>
             ) : (
               <>
-                <div style={{ fontSize: 42, marginBottom: 10, opacity: 0.6 }}>🖼️</div>
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 18 }}>
-                  Upload a photo or generate one with AI
+                <div style={{ fontSize: 40, marginBottom: 8 }}>🎨</div>
+                <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12 }}>
+                  Generate an avatar from your description
                 </p>
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} type="button">
-                    📷 Upload Photo
-                  </button>
-                  <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary btn-sm" onClick={handleGenerateImage}
+                    disabled={generating || !form.description.trim()} type="button">
                     {generating ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span className="gen-spinner" />
                         Generating...
                       </span>
-                    ) : '✨ Generate with AI'}
+                    ) : '✨ Generate Avatar'}
+                  </button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} type="button">
+                    📷 Upload Instead
                   </button>
                 </div>
               </>
@@ -185,24 +188,13 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           </div>
 
           {previewSrc && (
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
               <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => fileRef.current?.click()} type="button">
                 📷 Upload Different
               </button>
-              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleGenerateImage} disabled={generating} type="button">
+              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleGenerateImage} disabled={generating || !form.description.trim()} type="button">
                 {generating ? '✨ Generating...' : '🔄 Regenerate'}
               </button>
-            </div>
-          )}
-
-          <div className="form-label">Description (improves AI image + personality)</div>
-          <textarea className="input" style={{ minHeight: 90 }}
-            placeholder="e.g. 'A cheerful woman with freckles and a warm smile, wearing a cozy sweater in a coffee shop'"
-            value={form.description} onChange={e => set('description', e.target.value)} />
-
-          {form.description && !previewSrc && (
-            <div style={{ marginTop: 8, padding: '10px 14px', background: 'var(--accent-glow)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--accent)' }}>
-              💡 You wrote a description — click "Generate with AI" to create a matching avatar!
             </div>
           )}
 
@@ -220,43 +212,8 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
         </div>
       )}
 
-      {/* ===== STEP 2: Appearance ===== */}
+      {/* ===== STEP 2: Personality & Voice ===== */}
       {step === 2 && (
-        <div>
-          <h3 style={{ marginBottom: 16, fontSize: 18 }}>Appearance</h3>
-          <div className="form-label">Name *</div>
-          <input className="input" placeholder="Give your companion a name" value={form.name}
-            onChange={e => set('name', e.target.value)} />
-          <div className="form-label">Ethnicity</div>
-          <div className="chip-group">{ETHNICITIES.map(v => <Chip key={v} value={v} selected={form.ethnicity===v} onClick={() => set('ethnicity', v)} />)}</div>
-          <div className="form-label">Age Range</div>
-          <div className="chip-group">{AGES.map(v => <Chip key={v} value={v} selected={form.age_range===v} onClick={() => set('age_range', v)} />)}</div>
-          <div className="form-label">Eye Color</div>
-          <div className="chip-group">{EYE_COLORS.map(v => <Chip key={v} value={v} selected={form.eye_color===v} onClick={() => set('eye_color', v)} />)}</div>
-          <div className="form-label">Hair Style</div>
-          <div className="chip-group">{HAIR_STYLES.map(v => <Chip key={v} value={v} selected={form.hair_style===v} onClick={() => set('hair_style', v)} />)}</div>
-          <div className="form-label">Hair Color</div>
-          <div className="chip-group">{HAIR_COLORS.map(v => <Chip key={v} value={v} selected={form.hair_color===v} onClick={() => set('hair_color', v)} />)}</div>
-          <div className="form-label">Body Type</div>
-          <div className="chip-group">{BODY_TYPES.map(v => <Chip key={v} value={v} selected={form.body_type===v} onClick={() => set('body_type', v)} />)}</div>
-
-          {/* Regen banner */}
-          <div style={{ marginTop: 20, padding: '14px 16px', background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
-            {previewSrc && <img src={previewSrc} style={{ width: 44, height: 44, borderRadius: '50%', objectFit: 'cover' }} />}
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                {previewSrc ? 'Changed traits? Regenerate to match.' : 'No avatar yet — generate one!'}
-              </div>
-              <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
-                {generating ? '✨ Generating...' : previewSrc ? '🔄 Regenerate Avatar' : '✨ Generate Avatar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ===== STEP 3: Personality ===== */}
-      {step === 3 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Personality & Voice</h3>
           <div className="form-label">Personality</div>
@@ -268,8 +225,8 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
         </div>
       )}
 
-      {/* ===== STEP 4: Review ===== */}
-      {step === 4 && (
+      {/* ===== STEP 3: Review ===== */}
+      {step === 3 && (
         <div>
           <h3 style={{ marginBottom: 16, fontSize: 18 }}>Review & Create</h3>
           <div className="review-card">
@@ -284,16 +241,12 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
               )}
               <div>
                 <h3 style={{ fontSize: 22, fontWeight: 800 }}>{form.name || 'Unnamed'}</h3>
-                <p className="text-muted" style={{ fontSize: 13 }}>{form.personality} • {form.ethnicity}</p>
+                <p className="text-muted" style={{ fontSize: 13 }}>{form.personality}</p>
                 {form.generatedAvatarUrl && <span style={{ fontSize: 10, color: 'var(--success)' }}>✓ AI Generated Avatar</span>}
               </div>
             </div>
             <div className="review-detail-grid">
               <div><span className="review-detail-label">Style: </span>{form.category} / {form.art_style}</div>
-              <div><span className="review-detail-label">Age: </span>{form.age_range}</div>
-              <div><span className="review-detail-label">Eyes: </span>{form.eye_color}</div>
-              <div><span className="review-detail-label">Hair: </span>{form.hair_color} {form.hair_style}</div>
-              <div><span className="review-detail-label">Body: </span>{form.body_type}</div>
               <div><span className="review-detail-label">Voice: </span>{form.voice}</div>
             </div>
             {form.hobbies.length > 0 && (
@@ -306,7 +259,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
             {!previewSrc && (
               <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--accent-glow)', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
                 <p style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 8 }}>No avatar — generate one before creating?</p>
-                <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating} type="button">
+                <button className="btn btn-primary btn-sm" onClick={handleGenerateImage} disabled={generating || !form.description.trim()} type="button">
                   {generating ? '✨ Generating...' : '✨ Generate Avatar Now'}
                 </button>
               </div>
@@ -317,8 +270,13 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
 
       <div style={{ display: 'flex', gap: 12, marginTop: 28 }}>
         {step > 1 && <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setStep(s => s-1)}>Back</button>}
-        {step < 4 ? (
-          <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => setStep(s => s+1)}>Continue</button>
+        {step < 3 ? (
+          <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => {
+            if (step === 1 && !form.name.trim()) { setError('Please give your companion a name'); return; }
+            if (step === 1 && !form.description.trim()) { setError('Please write a description'); return; }
+            setError('');
+            setStep(s => s+1);
+          }}>Continue</button>
         ) : (
           <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleCreate} disabled={loading}>
             {loading ? 'Creating...' : '✨ Create & Start Chatting'}

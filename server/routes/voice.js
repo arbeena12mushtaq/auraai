@@ -50,32 +50,174 @@ router.post('/stt', authMiddleware, audioUpload.single('audio'), async (req, res
   finally { if (tp) try{fs.unlinkSync(tp)}catch{} }
 });
 
-// ===== Simli Auto: Create session for a companion =====
+// ===== Video Message: Generate a short video clip of the avatar speaking =====
+// Uses Simli's API to create a video from avatar image + audio
+router.post('/video-message', authMiddleware, async (req, res) => {
+  try {
+    const { text, voice, companionId, avatarUrl } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text required' });
+
+    const simliKey = process.env.SIMLI_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+
+    // Step 1: Generate audio via TTS
+    let audioBuffer = null;
+    if (openaiKey) {
+      try {
+        const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'tts-1',
+            input: text.substring(0, 4096),
+            voice: TTS_VOICES[voice] || 'nova',
+            response_format: 'mp3',
+          }),
+        });
+        if (ttsRes.ok) {
+          audioBuffer = Buffer.from(await ttsRes.arrayBuffer());
+        }
+      } catch (e) {
+        console.error('TTS for video failed:', e.message);
+      }
+    }
+
+    // If no audio, can't make video — fallback to audio-only
+    if (!audioBuffer) {
+      return res.json({ video_url: null, audio_url: null, error: 'TTS unavailable' });
+    }
+
+    // Save audio file regardless (used as fallback)
+    const audioFn = `tts-${Date.now()}.mp3`;
+    const audioPath = path.join(uploadDir, audioFn);
+    fs.writeFileSync(audioPath, audioBuffer);
+    const audioUrl = `/uploads/${audioFn}`;
+
+    // Step 2: If Simli is available, try to generate video with avatar
+    if (simliKey && avatarUrl) {
+      try {
+        // Resolve avatar URL to a full public URL for Simli
+        let fullAvatarUrl = avatarUrl;
+        if (avatarUrl.startsWith('/uploads/')) {
+          // It's a local path — Simli needs a public URL
+          // We'll use the Simli faceId approach instead, or skip if not publicly accessible
+          // For now, use default Simli face and fall back
+          console.log('⚠️ Avatar is local, Simli needs a public URL. Using default face.');
+        }
+
+        // Try Simli's lip-sync / video generation API
+        // Simli Auto creates a real-time session. For async video messages,
+        // we use Simli's "create video" API if available, otherwise fall back to audio.
+
+        // Attempt: Use Simli's async video generation endpoint
+        const simliRes = await fetch('https://api.simli.ai/textToVideoStream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-simli-api-key': simliKey,
+          },
+          body: JSON.stringify({
+            ttsAPIKey: openaiKey,
+            simliAPIKey: simliKey,
+            faceId: null, // Will be set below
+            requestBody: {
+              model: 'tts-1',
+              input: text.substring(0, 500),
+              voice: TTS_VOICES[voice] || 'nova',
+            },
+          }),
+        });
+
+        if (simliRes.ok) {
+          const contentType = simliRes.headers.get('content-type') || '';
+          if (contentType.includes('video') || contentType.includes('octet-stream')) {
+            const videoBuffer = Buffer.from(await simliRes.arrayBuffer());
+            const videoFn = `video-${Date.now()}.mp4`;
+            const videoPath = path.join(uploadDir, videoFn);
+            fs.writeFileSync(videoPath, videoBuffer);
+            console.log(`✅ Simli video message saved: ${videoFn}`);
+            return res.json({ video_url: `/uploads/${videoFn}`, audio_url: audioUrl });
+          } else {
+            const simliData = await simliRes.json();
+            if (simliData.url || simliData.video_url) {
+              return res.json({ video_url: simliData.url || simliData.video_url, audio_url: audioUrl });
+            }
+          }
+        } else {
+          const errText = await simliRes.text();
+          console.error('Simli video-message error:', simliRes.status, errText.substring(0, 200));
+        }
+      } catch (e) {
+        console.error('Simli video generation error:', e.message);
+      }
+    }
+
+    // Fallback: return audio only (client will show it as voice note)
+    console.log('📎 Video unavailable, falling back to audio');
+    res.json({ video_url: null, audio_url: audioUrl });
+  } catch (e) {
+    console.error('Video message error:', e.message);
+    res.status(500).json({ error: 'Video message failed' });
+  }
+});
+
+// ===== Simli Auto: Start live video call session =====
 router.post('/simli-start', authMiddleware, async (req, res) => {
   try {
     const simliKey = process.env.SIMLI_API_KEY;
     if (!simliKey) return res.json({ available: false, error: 'SIMLI_API_KEY not set' });
 
-    const { companionId, faceId } = req.body;
+    const { companionId, avatarUrl } = req.body;
 
     // Get companion info for system prompt
     let systemPrompt = 'You are a friendly AI companion. Be warm, playful, and engaging. Keep responses short (1-3 sentences).';
+    let faceId = '5514e24d-6086-46a3-ace4-6a7264e5cb7c'; // Default Simli face
+
     if (companionId) {
       const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
       if (comp.rows.length > 0) {
         const c = comp.rows[0];
         systemPrompt = `You are ${c.name}. Personality: ${c.personality||'friendly'}. Be warm, flirty (PG-13), playful, and engaging. Use emojis. Keep responses to 1-3 short sentences like texting. Never say you're an AI.`;
+
+        // If companion has an avatar, try to create a Simli face from it
+        // Simli allows creating custom faces from images
+        if (c.avatar_url || avatarUrl) {
+          const compAvatarUrl = avatarUrl || c.avatar_url;
+          try {
+            // Try to create a custom face in Simli from the avatar image
+            const createFaceRes = await fetch('https://api.simli.ai/faces', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-simli-api-key': simliKey,
+              },
+              body: JSON.stringify({
+                imageUrl: compAvatarUrl,
+                name: c.name || 'companion',
+              }),
+            });
+
+            if (createFaceRes.ok) {
+              const faceData = await createFaceRes.json();
+              if (faceData.faceId || faceData.id) {
+                faceId = faceData.faceId || faceData.id;
+                console.log(`✅ Created Simli face for ${c.name}: ${faceId}`);
+              }
+            } else {
+              console.log('⚠️ Could not create Simli face from avatar, using default');
+            }
+          } catch (e) {
+            console.log('⚠️ Simli face creation failed:', e.message);
+          }
+        }
       }
     }
 
-    // Build the custom LLM config pointing to Anthropic via OpenAI-compatible proxy
-    // OR use OpenAI directly since Simli supports it natively
     const openaiKey = process.env.OPENAI_API_KEY;
-    const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
     const sessionBody = {
       apiKey: simliKey,
-      faceId: faceId || '5514e24d-6086-46a3-ace4-6a7264e5cb7c',
+      faceId: faceId,
       ttsProvider: 'ElevenLabs',
       language: 'en',
       createTranscript: false,
@@ -94,7 +236,7 @@ router.post('/simli-start', authMiddleware, async (req, res) => {
       };
     }
 
-    console.log('🎬 Starting Simli Auto session...');
+    console.log('🎬 Starting Simli Auto session with faceId:', faceId);
     const r = await fetch('https://api.simli.ai/auto/start/configurable', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -122,7 +264,6 @@ router.get('/simli-config', authMiddleware, (req, res) => {
 });
 
 // ===== OpenAI-compatible endpoint for Simli to call as custom LLM =====
-// Simli Auto can point to YOUR server as the LLM backend
 router.post('/llm/chat/completions', async (req, res) => {
   try {
     const { messages, model } = req.body;
@@ -141,7 +282,6 @@ router.post('/llm/chat/completions', async (req, res) => {
       });
 
       if (r.ok) {
-        // Stream OpenAI-compatible format
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
 

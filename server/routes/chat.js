@@ -6,12 +6,10 @@ const router = express.Router();
 
 const PLAN_LIMITS = { starter: 500, plus: 2000, premium: 999999 };
 
-// Build an engaging system prompt
+// Build an engaging system prompt — uses description instead of appearance traits
 function buildSystemPrompt(companion) {
   const name = companion.name;
   const personality = companion.personality || 'Friendly and supportive';
-  const ethnicity = companion.ethnicity || '';
-  const age = companion.age_range || '20s';
   const voice = companion.voice || 'warm';
   const hobbies = companion.hobbies?.join(', ') || 'various interests';
   const desc = companion.description || '';
@@ -21,7 +19,6 @@ function buildSystemPrompt(companion) {
 YOUR IDENTITY:
 - Name: ${name}
 - Personality: ${personality}
-- Background: ${ethnicity}, appears ${age}
 - Speaking style: ${voice}
 - Interests: ${hobbies}
 ${desc ? `- About you: ${desc}` : ''}
@@ -203,7 +200,6 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
 
     if (!aiResponse) {
       console.log('Both APIs failed, using smart fallback');
-      // Smart fallback based on user's message
       const lc = content.toLowerCase();
       if (lc.includes('hello') || lc.includes('hi') || lc.includes('hey')) {
         aiResponse = `heyyy! 💕 so glad you're here, I was just thinking about you! how's your day going?`;

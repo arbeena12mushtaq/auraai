@@ -10,44 +10,19 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 function buildImagePrompt(data) {
   const gender = data.category === 'Guys' ? 'man' : 'woman';
   const isAnime = data.art_style === 'Anime';
-  const desc = (data.description || '').toLowerCase();
+  const desc = (data.description || '').trim();
 
-  // Detect fantasy/supernatural characters from description
-  const isFantasy = /\b(succubus|demon|angel|fairy|elf|vampire|witch|goddess|nymph|spirit|dragon|fox girl|cat girl|bunny girl|mermaid|sorceress|enchantress|mystical|supernatural|fantasy|mythical)\b/i.test(desc);
-
-  // Strip truly unsafe words but ALLOW fantasy terms
-  const safeDesc = (data.description || '')
+  // Strip unsafe words but keep fantasy terms
+  const safeDesc = desc
     .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|busty|thicc)\b/gi, '')
     .trim();
 
   let prompt = '';
 
-  if (isFantasy && isAnime) {
-    prompt = `Fantasy anime character illustration, ${gender}`;
-    if (data.hair_color) prompt += `, ${data.hair_color.toLowerCase()} hair`;
-    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
-    if (safeDesc) prompt += `. ${safeDesc}`;
-    prompt += '. Detailed fantasy anime art, vibrant colors, magical atmosphere, glowing effects, elegant fantasy outfit, dramatic lighting, high quality digital painting, fully clothed';
-  } else if (isFantasy) {
-    prompt = `Digital art portrait of a fantasy ${gender} character`;
-    if (data.hair_color) prompt += `, ${data.hair_color.toLowerCase()} hair`;
-    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
-    if (safeDesc) prompt += `. ${safeDesc}`;
-    prompt += '. Dramatic fantasy lighting, magical atmosphere, elegant dark fantasy outfit, glowing accents, detailed digital painting, concept art quality, fully clothed, tasteful';
-  } else if (isAnime) {
-    prompt = `Anime character portrait of a friendly ${gender}`;
-    if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
-    if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
-    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
-    if (safeDesc) prompt += `. ${safeDesc}`;
-    prompt += '. Clean modern anime art, vibrant colors, detailed eyes, soft lighting, high quality digital illustration, cheerful expression, casual outfit';
+  if (isAnime) {
+    prompt = `Anime character portrait of a ${gender}. ${safeDesc}. Clean modern anime art, vibrant colors, detailed eyes, soft lighting, high quality digital illustration, casual outfit`;
   } else {
-    prompt = `Professional portrait photograph of a friendly ${gender}`;
-    if (data.ethnicity && data.ethnicity !== 'Mixed') prompt += `, ${data.ethnicity}`;
-    if (data.hair_color && data.hair_style) prompt += `, ${data.hair_color.toLowerCase()} ${data.hair_style.toLowerCase()} hair`;
-    if (data.eye_color) prompt += `, ${data.eye_color.toLowerCase()} eyes`;
-    if (safeDesc) prompt += `. ${safeDesc}`;
-    prompt += '. Soft natural lighting, warm colors, genuine smile, looking at camera, sharp focus, casual clothing, high quality photograph';
+    prompt = `Professional portrait photograph of a ${gender}. ${safeDesc}. Soft natural lighting, warm colors, genuine expression, looking at camera, sharp focus, high quality photograph`;
   }
 
   return prompt;
@@ -163,10 +138,14 @@ router.post('/generate', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Description contains inappropriate content' });
     }
 
+    if (!req.body.description?.trim()) {
+      return res.status(400).json({ error: 'Please provide a description to generate an avatar.' });
+    }
+
     const prompt = buildImagePrompt(req.body);
     console.log('🎨 Image prompt:', prompt.substring(0, 120) + '...');
 
-    // Try providers in order: OpenAI (you have key) → Together → Stability
+    // Try providers in order: OpenAI → Together → Stability
     let imageBuffer = null;
     let provider = '';
 
@@ -176,7 +155,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
     // If DALL-E rejected for safety, retry with simpler prompt
     if (!imageBuffer && process.env.OPENAI_API_KEY) {
       const gender = req.body.category === 'Guys' ? 'man' : 'woman';
-      const simplePrompt = `Professional headshot photograph of a friendly young ${gender}, ${req.body.hair_color || ''} hair, ${req.body.eye_color || ''} eyes, smiling, casual clothing, neutral studio background, soft lighting, high quality portrait`;
+      const simplePrompt = `Professional headshot photograph of a friendly young ${gender}, smiling, casual clothing, neutral studio background, soft lighting, high quality portrait`;
       console.log('🔄 Retrying DALL-E with simplified prompt...');
       imageBuffer = await generateWithOpenAI(simplePrompt);
       if (imageBuffer) provider = 'openai-retry';
@@ -202,7 +181,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
     const filename = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
     const filepath = path.join(uploadDir, filename);
     fs.writeFileSync(filepath, imageBuffer);
-    console.log(`✅ Saved ${provider} image: ${filename} (${Math.round(imageBuffer.length/1024)}KB)`);
+    console.log(`✅ Saved ${provider} image: ${filename} (${Math.round(imageBuffer.length / 1024)}KB)`);
 
     res.json({ avatar_url: `/uploads/${filename}`, provider });
   } catch (err) {
