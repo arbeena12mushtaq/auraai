@@ -56,6 +56,112 @@ function getRandomScene() {
   };
 }
 
+// ===== FREE Face Swap via HuggingFace Spaces (Gradio API) =====
+// Uses public face-swap spaces — completely free, no API key needed
+
+async function faceSwapHF(sourceImagePath, targetImagePath) {
+  // List of free face swap HF Spaces to try (in order)
+  const spaces = [
+    'https://felixrosberg-face-swap.hf.space',
+    'https://prithivmlmods-face-swap-roop.hf.space',
+    'https://tonyassi-face-swap.hf.space',
+  ];
+
+  const sourceBuffer = fs.readFileSync(sourceImagePath);
+  const targetBuffer = fs.readFileSync(targetImagePath);
+  const sourceB64 = sourceBuffer.toString('base64');
+  const targetB64 = targetBuffer.toString('base64');
+
+  for (const spaceUrl of spaces) {
+    try {
+      console.log(`🔄 Trying face swap: ${spaceUrl.split('//')[1].split('.')[0]}...`);
+
+      // Step 1: Submit the job
+      const submitRes = await fetch(`${spaceUrl}/gradio_api/call/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: [
+            { path: `data:image/png;base64,${sourceB64}` },  // source face
+            { path: `data:image/png;base64,${targetB64}` },  // target image
+          ]
+        }),
+      });
+
+      if (!submitRes.ok) {
+        // Try alternative endpoint names
+        const submitRes2 = await fetch(`${spaceUrl}/gradio_api/call/run_inference`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            data: [
+              `data:image/png;base64,${sourceB64}`,
+              `data:image/png;base64,${targetB64}`,
+            ]
+          }),
+        });
+        if (!submitRes2.ok) {
+          console.log(`Face swap ${spaceUrl}: submit failed ${submitRes.status}`);
+          continue;
+        }
+        const eventId2 = (await submitRes2.json()).event_id;
+        if (!eventId2) continue;
+
+        // Poll for result
+        const resultRes2 = await fetch(`${spaceUrl}/gradio_api/call/run_inference/${eventId2}`);
+        if (!resultRes2.ok) continue;
+        const resultText2 = await resultRes2.text();
+        const dataMatch2 = resultText2.match(/data:\s*(\[.*\])/s);
+        if (dataMatch2) {
+          const resultData2 = JSON.parse(dataMatch2[1]);
+          const outputUrl = resultData2[0]?.url || resultData2[0]?.path || resultData2[0];
+          if (outputUrl && typeof outputUrl === 'string') {
+            const imgRes = await fetch(outputUrl.startsWith('http') ? outputUrl : `${spaceUrl}/gradio_api/file=${outputUrl}`);
+            if (imgRes.ok) {
+              console.log('✅ Face swap completed!');
+              return Buffer.from(await imgRes.arrayBuffer());
+            }
+          }
+        }
+        continue;
+      }
+
+      const submitData = await submitRes.json();
+      const eventId = submitData.event_id;
+      if (!eventId) { console.log('No event_id'); continue; }
+
+      // Step 2: Get result (SSE stream)
+      const resultRes = await fetch(`${spaceUrl}/gradio_api/call/predict/${eventId}`);
+      if (!resultRes.ok) { console.log('Result fetch failed'); continue; }
+
+      const resultText = await resultRes.text();
+      // Parse SSE response - look for data: line with the result
+      const dataMatch = resultText.match(/data:\s*(\[.*\])/s);
+      if (!dataMatch) { console.log('No data in response'); continue; }
+
+      const resultData = JSON.parse(dataMatch[1]);
+      // Result is usually an object with url or path
+      const output = resultData[0];
+      const outputUrl = output?.url || output?.path || (typeof output === 'string' ? output : null);
+
+      if (outputUrl) {
+        const fullUrl = outputUrl.startsWith('http') ? outputUrl : `${spaceUrl}/gradio_api/file=${outputUrl}`;
+        const imgRes = await fetch(fullUrl);
+        if (imgRes.ok) {
+          console.log('✅ Face swap completed!');
+          return Buffer.from(await imgRes.arrayBuffer());
+        }
+      }
+    } catch (err) {
+      console.log(`Face swap ${spaceUrl} error:`, err.message);
+      continue;
+    }
+  }
+
+  console.log('⚠️ All face swap spaces failed');
+  return null;
+}
+
 // ===== Pollinations.ai — FREE, no API key, no rate limit, uses Flux =====
 
 async function generateWithPollinations(prompt, width = 1024, height = 1024) {
@@ -342,6 +448,24 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     if (!imageBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.image, req.user.id]);
       return res.status(500).json({ error: 'Image generation failed. Tokens refunded.' });
+    }
+
+    // Face swap: put the avatar's face onto the scene image (FREE via HF Spaces)
+    if (companion.avatar_url && !isAnime) {
+      const avatarPath = path.join(uploadDir, path.basename(companion.avatar_url));
+      if (fs.existsSync(avatarPath)) {
+        const tempScenePath = path.join(uploadDir, `temp-scene-${Date.now()}.png`);
+        fs.writeFileSync(tempScenePath, imageBuffer);
+        const swappedBuffer = await faceSwapHF(avatarPath, tempScenePath);
+        if (swappedBuffer) {
+          imageBuffer = swappedBuffer;
+          provider += '+faceswap';
+          console.log('✅ Face swapped onto scene');
+        } else {
+          console.log('⚠️ Face swap failed, using original scene');
+        }
+        try { fs.unlinkSync(tempScenePath); } catch {}
+      }
     }
 
     const filename = `scene-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
