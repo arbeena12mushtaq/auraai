@@ -70,63 +70,80 @@ async function generateWithGemini(prompt, referenceImagePath) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) { console.log('⚠️ No GEMINI_API_KEY'); return null; }
 
-  try {
-    console.log('🍌 Trying Google Nano Banana...');
+  // Retry up to 3 times with backoff for rate limits
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = attempt * 5000; // 5s, 10s
+        console.log(`🍌 Gemini retry ${attempt + 1}/3, waiting ${delay / 1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.log('🍌 Trying Google Nano Banana...');
+      }
 
-    const parts = [{ text: prompt }];
+      const parts = [{ text: prompt }];
 
-    // If we have a reference image (the avatar), include it for character consistency
-    if (referenceImagePath) {
-      let imageBase64;
-      if (referenceImagePath.startsWith('/uploads/') || referenceImagePath.startsWith('uploads/')) {
-        const fullPath = path.join(uploadDir, path.basename(referenceImagePath));
-        if (fs.existsSync(fullPath)) {
-          imageBase64 = fs.readFileSync(fullPath).toString('base64');
+      // If we have a reference image (the avatar), include it for character consistency
+      if (referenceImagePath) {
+        let imageBase64;
+        const localPath = referenceImagePath.startsWith('/uploads/') || referenceImagePath.startsWith('uploads/')
+          ? path.join(uploadDir, path.basename(referenceImagePath))
+          : referenceImagePath.startsWith('/') ? path.join(__dirname, '..', referenceImagePath) : null;
+
+        if (localPath && fs.existsSync(localPath)) {
+          imageBase64 = fs.readFileSync(localPath).toString('base64');
+        }
+        if (imageBase64) {
+          parts.unshift({
+            inlineData: { mimeType: 'image/png', data: imageBase64 }
+          });
         }
       }
-      if (imageBase64) {
-        parts.unshift({
-          inlineData: { mimeType: 'image/png', data: imageBase64 }
-        });
-      }
-    }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            responseModalities: ['IMAGE'],
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
           },
-        }),
-      }
-    );
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: {
+              responseModalities: ['IMAGE'],
+            },
+          }),
+        }
+      );
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error('Gemini error:', res.status, errText.substring(0, 300));
+      if (res.status === 429) {
+        console.log('🍌 Gemini rate limited (429), will retry...');
+        continue; // retry
+      }
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Gemini error:', res.status, errText.substring(0, 300));
+        return null;
+      }
+
+      const data = await res.json();
+      const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+      if (imagePart?.inlineData?.data) {
+        console.log('✅ Nano Banana image generated');
+        return Buffer.from(imagePart.inlineData.data, 'base64');
+      }
+
+      console.error('Gemini: no image in response');
+      return null;
+    } catch (err) {
+      console.error('Gemini error:', err.message);
+      if (attempt < 2) continue;
       return null;
     }
-
-    const data = await res.json();
-    const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    if (imagePart?.inlineData?.data) {
-      console.log('✅ Nano Banana image generated');
-      return Buffer.from(imagePart.inlineData.data, 'base64');
-    }
-
-    console.error('Gemini: no image in response');
-    return null;
-  } catch (err) {
-    console.error('Gemini error:', err.message);
-    return null;
   }
+  return null;
 }
 
 // ===== DALL-E fallback =====
@@ -140,7 +157,7 @@ async function generateWithOpenAI(prompt) {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'dall-e-3', prompt: prompt + '. Safe for work, fully clothed.',
+        model: 'dall-e-3', prompt: prompt + '. Tasteful, appropriate, fully clothed, professional photo.',
         n: 1, size: '1024x1024', quality: 'standard', response_format: 'b64_json',
       }),
     });
@@ -343,13 +360,17 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     const gender = req.body.category === 'Guys' ? 'man' : 'woman';
     const isAnime = req.body.art_style === 'Anime';
-    const desc = req.body.description.replace(/\b(sexy|hot|nude|naked|nsfw|explicit|busty|thicc)\b/gi, '').trim();
+    // Clean description more aggressively for safety
+    const desc = req.body.description
+      .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|busty|thicc|seductive|lingerie|bikini|underwear|bra|panties|cleavage|succubus|demon girl)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
 
     let prompt;
     if (isAnime) {
-      prompt = `Create an anime character portrait of a ${gender}. ${desc}. Clean anime art, vibrant colors, detailed eyes, high quality, casual outfit`;
+      prompt = `Create a beautiful anime character portrait of a ${gender}. ${desc}. High quality anime illustration, vibrant colors, detailed eyes, clean lines, elegant casual outfit, soft lighting`;
     } else {
-      prompt = `Create an ultra realistic professional portrait photo of a real ${gender}, ${desc}. Shot on Canon EOS R5, 85mm lens, f/1.8, natural lighting, shallow depth of field, detailed skin texture, photorealistic, high resolution, looking at camera with genuine expression`;
+      prompt = `Create a photorealistic portrait of a friendly ${gender}, ${desc}. Professional photography, 85mm lens, natural lighting, genuine warm smile, casual clothing, high resolution`;
     }
 
     // Try Gemini first (free + best quality), then DALL-E fallback
