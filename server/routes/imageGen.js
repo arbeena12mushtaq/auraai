@@ -122,7 +122,7 @@ async function generateWithOpenAI(prompt) {
 
 // ===== Pixverse Image-to-Video (free daily credits) =====
 
-async function generateVideoWithPixverse(localImagePath, prompt) {
+async function generateVideoWithPixverse(localImagePath, prompt, publicBaseUrl) {
   const apiKey = process.env.PIXVERSE_API_KEY;
   if (!apiKey) { console.log('⚠️ No PIXVERSE_API_KEY'); return null; }
 
@@ -135,25 +135,45 @@ async function generateVideoWithPixverse(localImagePath, prompt) {
       return null;
     }
 
-    const imgBuffer = fs.readFileSync(fullPath);
+    // Upload image using image_url (public URL of the image on our server)
+    const imagePublicUrl = `${publicBaseUrl}/uploads/${path.basename(localImagePath)}`;
+    console.log('🎬 Pixverse uploading from URL:', imagePublicUrl);
+
     const FormData = require('form-data');
     const formData = new FormData();
-    formData.append('image', imgBuffer, { filename: 'scene.png', contentType: 'image/png' });
+    formData.append('image_url', imagePublicUrl);
 
     const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
       method: 'POST',
-      headers: { 'API-KEY': apiKey, ...formData.getHeaders() },
+      headers: { 'API-KEY': apiKey },
       body: formData,
     });
 
+    let uploadData;
     if (!uploadRes.ok) {
-      console.error('Pixverse upload error:', uploadRes.status, (await uploadRes.text()).substring(0, 200));
-      return null;
+      // Try direct file upload as fallback
+      console.log('🎬 URL upload failed, trying file upload...');
+      const formData2 = new FormData();
+      const fileStream = fs.createReadStream(fullPath);
+      formData2.append('image', fileStream, { filename: 'scene.png', contentType: 'image/png' });
+
+      const uploadRes2 = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
+        method: 'POST',
+        headers: { 'API-KEY': apiKey },
+        body: formData2,
+      });
+
+      if (!uploadRes2.ok) {
+        console.error('Pixverse file upload error:', uploadRes2.status, (await uploadRes2.text()).substring(0, 200));
+        return null;
+      }
+      uploadData = await uploadRes2.json();
+    } else {
+      uploadData = await uploadRes.json();
     }
 
-    const uploadData = await uploadRes.json();
     const imgId = uploadData.Resp?.img_id || uploadData.Resp?.id;
-    if (!imgId) { console.error('Pixverse: no img_id'); return null; }
+    if (!imgId) { console.error('Pixverse: no img_id', JSON.stringify(uploadData).substring(0, 200)); return null; }
 
     console.log(`🎬 Pixverse image uploaded, id: ${imgId}`);
 
@@ -380,8 +400,9 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     // Step 2: Convert to video (Pixverse → Runway → fallback to image)
     const motionPrompt = `${gender} gently smiling, subtle natural movement, cinematic`;
+    const publicBaseUrl = process.env.CLIENT_URL || `https://${req.headers.host}`;
 
-    let videoBuffer = await generateVideoWithPixverse(`/uploads/${sceneFilename}`, motionPrompt);
+    let videoBuffer = await generateVideoWithPixverse(`/uploads/${sceneFilename}`, motionPrompt, publicBaseUrl);
     if (!videoBuffer) videoBuffer = await generateVideoWithRunway(sceneBuffer, motionPrompt);
 
     if (videoBuffer) {
