@@ -27,14 +27,12 @@ async function deductTokens(userId, amount, action, description) {
   return true;
 }
 
-// Get the full public URL for a local file (needed for Replicate API)
 function getPublicUrl(req, localPath) {
   if (localPath.startsWith('http')) return localPath;
   const base = process.env.CLIENT_URL || `https://${req.headers.host}`;
   return `${base}${localPath}`;
 }
 
-// Random scene settings for variety
 function getRandomScene() {
   const settings = [
     'at a cozy coffee shop with warm ambient lighting, sitting by the window with a latte',
@@ -45,13 +43,12 @@ function getRandomScene() {
     'at a park bench in autumn, golden fallen leaves around, warm afternoon light',
     'in a bedroom with morning sunlight streaming through sheer curtains',
     'walking down a European cobblestone street at sunset',
-    'in a high-end shopping district, carrying shopping bags, looking happy',
     'at a pool party, sitting by the pool edge, turquoise water',
     'in a cozy kitchen, cooking, natural light from window',
     'at a gym, sporty pose, athletic outfit, bright lighting',
-    'at a music festival at night, colorful stage lights in background',
-    'in a luxury car interior, leather seats, cinematic lighting',
     'at a balcony overlooking the ocean, sunset colors in sky',
+    'in a luxury car interior, leather seats, cinematic lighting',
+    'at a music festival at night, colorful stage lights in background',
   ];
   const outfits = [
     'wearing a casual elegant dress', 'in a fitted top and high-waisted jeans',
@@ -59,7 +56,6 @@ function getRandomScene() {
     'wearing a trendy crop top and skirt', 'in elegant evening wear',
     'wearing a silk blouse and trousers', 'in athletic wear',
     'wearing a stylish leather jacket', 'in a cute off-shoulder top',
-    'wearing a designer outfit', 'in a bikini top and sarong',
   ];
   return {
     setting: settings[Math.floor(Math.random() * settings.length)],
@@ -67,129 +63,275 @@ function getRandomScene() {
   };
 }
 
-// ===== Image Generation Providers =====
+// ===== Google Nano Banana (Gemini 2.5 Flash Image) =====
+// FREE on Google AI Studio, keeps character consistency when you pass the avatar image
 
-// DALL-E 3
+async function generateWithGemini(prompt, referenceImagePath) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) { console.log('⚠️ No GEMINI_API_KEY'); return null; }
+
+  try {
+    console.log('🍌 Trying Google Nano Banana...');
+
+    const parts = [{ text: prompt }];
+
+    // If we have a reference image (the avatar), include it for character consistency
+    if (referenceImagePath) {
+      let imageBase64;
+      if (referenceImagePath.startsWith('/uploads/') || referenceImagePath.startsWith('uploads/')) {
+        const fullPath = path.join(uploadDir, path.basename(referenceImagePath));
+        if (fs.existsSync(fullPath)) {
+          imageBase64 = fs.readFileSync(fullPath).toString('base64');
+        }
+      }
+      if (imageBase64) {
+        parts.unshift({
+          inlineData: { mimeType: 'image/png', data: imageBase64 }
+        });
+      }
+    }
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+          },
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('Gemini error:', res.status, errText.substring(0, 300));
+      return null;
+    }
+
+    const data = await res.json();
+    const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    if (imagePart?.inlineData?.data) {
+      console.log('✅ Nano Banana image generated');
+      return Buffer.from(imagePart.inlineData.data, 'base64');
+    }
+
+    console.error('Gemini: no image in response');
+    return null;
+  } catch (err) {
+    console.error('Gemini error:', err.message);
+    return null;
+  }
+}
+
+// ===== DALL-E fallback =====
+
 async function generateWithOpenAI(prompt) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) { console.log('⚠️ No OPENAI_API_KEY'); return null; }
   try {
+    console.log('🎨 Trying OpenAI DALL-E fallback...');
     const res = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'dall-e-3', prompt, n: 1, size: '1024x1024',
-        quality: 'standard', response_format: 'b64_json',
+        model: 'dall-e-3', prompt: prompt + '. Safe for work, fully clothed.',
+        n: 1, size: '1024x1024', quality: 'standard', response_format: 'b64_json',
       }),
     });
-    if (!res.ok) { console.error('DALL-E error:', res.status); return null; }
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('DALL-E error:', res.status, errText.substring(0, 200));
+      return null;
+    }
     const data = await res.json();
     const b64 = data.data?.[0]?.b64_json;
-    return b64 ? Buffer.from(b64, 'base64') : null;
+    if (!b64) return null;
+    console.log('✅ DALL-E image generated');
+    return Buffer.from(b64, 'base64');
   } catch (err) { console.error('DALL-E error:', err.message); return null; }
 }
 
-// Together AI (Flux - more realistic)
-async function generateWithTogetherAI(prompt) {
-  const apiKey = process.env.TOGETHER_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch('https://api.together.xyz/v1/images/generations', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'black-forest-labs/FLUX.1-schnell-Free',
-        prompt, negative_prompt: 'nsfw, nude, naked, ugly, deformed, cartoon, anime, painting, drawing',
-        width: 768, height: 1024, steps: 4, n: 1, response_format: 'b64_json',
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const b64 = data.data?.[0]?.b64_json;
-    return b64 ? Buffer.from(b64, 'base64') : null;
-  } catch { return null; }
-}
+// ===== Pixverse Image-to-Video (free daily credits) =====
 
-// ===== Face Swap via Replicate =====
-
-async function faceSwap(targetImageUrl, swapImageUrl) {
-  const apiToken = process.env.REPLICATE_API_TOKEN;
-  if (!apiToken) {
-    console.log('⚠️ No REPLICATE_API_TOKEN — skipping face swap');
-    return null;
-  }
+async function generateVideoWithPixverse(imageUrl, prompt) {
+  const apiKey = process.env.PIXVERSE_API_KEY;
+  if (!apiKey) { console.log('⚠️ No PIXVERSE_API_KEY'); return null; }
 
   try {
-    console.log('🔄 Starting Replicate face-swap...');
+    console.log('🎬 Trying Pixverse image-to-video...');
 
-    // Create prediction
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+    // Step 1: Upload image to Pixverse
+    const imgBuffer = fs.readFileSync(imageUrl.startsWith('/') ?
+      path.join(__dirname, '..', imageUrl) :
+      path.join(uploadDir, path.basename(imageUrl))
+    );
+
+    // Use form-data to upload image
+    const FormData = require('form-data');
+    const formData = new FormData();
+    formData.append('image', imgBuffer, { filename: 'scene.png', contentType: 'image/png' });
+
+    const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiToken}`,
+        'API-KEY': apiKey,
+        ...formData.getHeaders(),
+      },
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      console.error('Pixverse upload error:', uploadRes.status, errText.substring(0, 200));
+      return null;
+    }
+
+    const uploadData = await uploadRes.json();
+    const imgId = uploadData.Resp?.img_id || uploadData.Resp?.id;
+    if (!imgId) {
+      console.error('Pixverse: no img_id in upload response', JSON.stringify(uploadData).substring(0, 200));
+      return null;
+    }
+
+    console.log(`🎬 Pixverse image uploaded, id: ${imgId}`);
+
+    // Step 2: Generate video
+    const genRes = await fetch('https://app-api.pixverse.ai/openapi/v2/video/img/generate', {
+      method: 'POST',
+      headers: {
+        'API-KEY': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        version: 'd5900f9ebed33e7ae08a07f17e0d98b4ebc68ab9528a70462afc3899cfe23bab',
-        input: {
-          target_image: targetImageUrl,
-          swap_image: swapImageUrl,
-          weight: 0.5,
-          det_thresh: 0.1,
-          cache_days: 10,
-        },
+        duration: 5,
+        img_id: imgId,
+        model: 'v5.6',
+        motion_mode: 'normal',
+        prompt: prompt || 'gentle smile, subtle natural movement, soft breeze',
+        negative_prompt: 'fast movement, distortion, blur',
+        quality: '540p',
+      }),
+    });
+
+    if (!genRes.ok) {
+      const errText = await genRes.text();
+      console.error('Pixverse generate error:', genRes.status, errText.substring(0, 200));
+      return null;
+    }
+
+    const genData = await genRes.json();
+    const videoId = genData.Resp?.id;
+    if (!videoId) {
+      console.error('Pixverse: no video id', JSON.stringify(genData).substring(0, 200));
+      return null;
+    }
+
+    console.log(`🎬 Pixverse video generation started, id: ${videoId}`);
+
+    // Step 3: Poll for result (max 120 seconds)
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+
+      const pollRes = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/${videoId}`, {
+        headers: { 'API-KEY': apiKey },
+      });
+
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      const video = pollData.Resp;
+
+      if (video?.status === 1 && video?.url) {
+        console.log('✅ Pixverse video completed:', video.url.substring(0, 80));
+        // Download video
+        const videoRes = await fetch(video.url);
+        if (videoRes.ok) {
+          return Buffer.from(await videoRes.arrayBuffer());
+        }
+        return video.url; // Return URL if download fails
+      }
+
+      if (video?.status === 4 || video?.status === 6) {
+        console.error('Pixverse video failed, status:', video.status);
+        return null;
+      }
+
+      console.log(`🎬 Pixverse polling... status: ${video?.status} (${i + 1}/40)`);
+    }
+
+    console.error('Pixverse video timed out');
+    return null;
+  } catch (err) {
+    console.error('Pixverse error:', err.message);
+    return null;
+  }
+}
+
+// ===== Runway ML fallback for video =====
+
+async function generateVideoWithRunway(imageBuffer, prompt) {
+  const runwayKey = process.env.RUNWAYML_API_SECRET || process.env.RUNWAY_API_KEY;
+  if (!runwayKey) return null;
+
+  try {
+    console.log('🎬 Trying Runway Gen-4 Turbo fallback...');
+    const dataUri = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+
+    const createRes = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${runwayKey}`,
+        'X-Runway-Version': '2024-11-06',
+      },
+      body: JSON.stringify({
+        model: 'gen4_turbo',
+        promptImage: dataUri,
+        promptText: prompt || 'gentle smile, subtle natural movement, cinematic',
+        ratio: '720:1280',
+        duration: 5,
       }),
     });
 
     if (!createRes.ok) {
       const errText = await createRes.text();
-      console.error('Replicate create error:', createRes.status, errText.substring(0, 200));
+      console.error('Runway error:', createRes.status, errText.substring(0, 200));
       return null;
     }
 
-    const prediction = await createRes.json();
-    const predictionId = prediction.id;
-    console.log(`🔄 Face-swap prediction: ${predictionId}`);
+    const taskData = await createRes.json();
+    const taskId = taskData.id;
 
-    // Poll for result (max 60 seconds)
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
-        headers: { 'Authorization': `Bearer ${apiToken}` },
+    // Poll
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const pollRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+        headers: { 'Authorization': `Bearer ${runwayKey}`, 'X-Runway-Version': '2024-11-06' },
       });
+      if (!pollRes.ok) continue;
       const pollData = await pollRes.json();
-
-      if (pollData.status === 'succeeded') {
-        const outputUrl = pollData.output;
-        if (outputUrl) {
-          console.log('✅ Face-swap completed');
-          // Download the result
-          const imgRes = await fetch(typeof outputUrl === 'string' ? outputUrl : outputUrl[0] || outputUrl);
-          if (imgRes.ok) {
-            return Buffer.from(await imgRes.arrayBuffer());
-          }
+      if (pollData.status === 'SUCCEEDED') {
+        const url = pollData.output?.[0] || pollData.artifactUrl;
+        if (url) {
+          const videoRes = await fetch(url);
+          if (videoRes.ok) return Buffer.from(await videoRes.arrayBuffer());
         }
         return null;
       }
-
-      if (pollData.status === 'failed' || pollData.status === 'canceled') {
-        console.error('Face-swap failed:', pollData.error);
-        return null;
-      }
+      if (pollData.status === 'FAILED') return null;
     }
-
-    console.error('Face-swap timed out');
     return null;
-  } catch (err) {
-    console.error('Face-swap error:', err.message);
-    return null;
-  }
+  } catch (err) { console.error('Runway error:', err.message); return null; }
 }
 
-// ===== Routes =====
+// ===== ROUTES =====
 
-// Generate avatar during character creation (free)
+// Generate avatar during character creation (FREE)
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
     if (req.body.description && !contentFilter(req.body.description)) {
@@ -205,16 +347,14 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     let prompt;
     if (isAnime) {
-      prompt = `Anime character portrait of a ${gender}. ${desc}. Clean anime art, vibrant colors, detailed eyes, high quality, casual outfit`;
+      prompt = `Create an anime character portrait of a ${gender}. ${desc}. Clean anime art, vibrant colors, detailed eyes, high quality, casual outfit`;
     } else {
-      prompt = `Ultra realistic professional portrait photo of a real ${gender}, ${desc}. Shot on Canon EOS R5, 85mm lens, f/1.8, natural lighting, shallow depth of field, detailed skin texture, photorealistic, high resolution, looking at camera with genuine expression`;
+      prompt = `Create an ultra realistic professional portrait photo of a real ${gender}, ${desc}. Shot on Canon EOS R5, 85mm lens, f/1.8, natural lighting, shallow depth of field, detailed skin texture, photorealistic, high resolution, looking at camera with genuine expression`;
     }
 
-    console.log('🎨 Avatar prompt:', prompt.substring(0, 120) + '...');
-
-    // Prefer Together AI (Flux) for more realistic portraits
-    let imageBuffer = await generateWithTogetherAI(prompt);
-    let provider = imageBuffer ? 'together-flux' : '';
+    // Try Gemini first (free + best quality), then DALL-E fallback
+    let imageBuffer = await generateWithGemini(prompt, null);
+    let provider = imageBuffer ? 'gemini-nano-banana' : '';
 
     if (!imageBuffer) {
       imageBuffer = await generateWithOpenAI(prompt);
@@ -236,7 +376,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
   }
 });
 
-// Generate scene photo with face swap (costs tokens)
+// Generate scene photo with character consistency (costs tokens)
 router.post('/generate-scene', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.body;
@@ -246,70 +386,40 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     if (comp.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
     const companion = comp.rows[0];
 
-    // Deduct tokens
     await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Photo of ${companion.name}`);
 
-    // Build scene prompt (generic person + scene, face will be swapped after)
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
     const { setting, outfit } = getRandomScene();
 
-    const prompt = `Ultra realistic photograph of a beautiful young ${gender}, ${setting}, ${outfit}. Shot on Canon EOS R5, 85mm lens, natural lighting, detailed skin texture, photorealistic, high resolution, candid natural pose, genuine expression`;
+    // Gemini Nano Banana: pass avatar as reference image + scene prompt
+    // This keeps the SAME face/character and changes the environment
+    const prompt = `Show this exact same person ${setting}, ${outfit}. Keep the same face, same identity. Ultra realistic photograph, photorealistic, high resolution, candid natural pose, beautiful lighting`;
 
-    console.log('📸 Scene prompt:', prompt.substring(0, 120) + '...');
+    let imageBuffer = await generateWithGemini(prompt, companion.avatar_url);
+    let provider = imageBuffer ? 'gemini-nano-banana' : '';
 
-    // Generate scene image
-    let sceneBuffer = await generateWithTogetherAI(prompt);
-    let provider = sceneBuffer ? 'together-flux' : '';
-
-    if (!sceneBuffer) {
-      sceneBuffer = await generateWithOpenAI(prompt + '. Safe for work, fully clothed, tasteful.');
-      if (sceneBuffer) provider = 'openai';
+    // Fallback to DALL-E (won't have consistent face but still generates a scene)
+    if (!imageBuffer) {
+      const fallbackPrompt = `Ultra realistic photograph of a beautiful young ${gender}, ${setting}, ${outfit}. Photorealistic, high resolution, candid pose`;
+      imageBuffer = await generateWithOpenAI(fallbackPrompt);
+      if (imageBuffer) provider = 'openai-fallback';
     }
 
-    if (!sceneBuffer) {
-      // Refund
+    if (!imageBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.image, req.user.id]);
       return res.status(500).json({ error: 'Image generation failed. Tokens refunded.' });
     }
 
-    // Save scene image (before face swap)
-    const sceneFilename = `scene-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
-    fs.writeFileSync(path.join(uploadDir, sceneFilename), sceneBuffer);
+    const filename = `scene-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
+    fs.writeFileSync(path.join(uploadDir, filename), imageBuffer);
+    const finalUrl = `/uploads/${filename}`;
 
-    // Face swap: put the avatar's face onto the scene image
-    let finalFilename = sceneFilename;
-
-    if (companion.avatar_url && process.env.REPLICATE_API_TOKEN) {
-      const sceneUrl = getPublicUrl(req, `/uploads/${sceneFilename}`);
-      const avatarUrl = getPublicUrl(req, companion.avatar_url);
-
-      console.log('🔄 Face swap: avatar → scene...');
-      const swappedBuffer = await faceSwap(sceneUrl, avatarUrl);
-
-      if (swappedBuffer) {
-        finalFilename = `swapped-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
-        fs.writeFileSync(path.join(uploadDir, finalFilename), swappedBuffer);
-        console.log(`✅ Face-swapped image saved: ${finalFilename}`);
-        // Delete the unswapped scene
-        try { fs.unlinkSync(path.join(uploadDir, sceneFilename)); } catch {}
-      } else {
-        console.log('⚠️ Face swap failed, using original scene image');
-      }
-    } else if (!companion.avatar_url) {
-      console.log('⚠️ No avatar URL, skipping face swap');
-    } else {
-      console.log('⚠️ No REPLICATE_API_TOKEN, skipping face swap');
-    }
-
-    const finalUrl = `/uploads/${finalFilename}`;
-
-    // Save as message
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
       [req.user.id, companionId, '📸', finalUrl]
     );
 
-    console.log(`✅ Scene photo complete: ${finalFilename} (${provider})`);
+    console.log(`✅ Scene photo: ${filename} (${provider})`);
     res.json({ image_url: finalUrl, caption: '📸', provider });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
@@ -318,16 +428,11 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
   }
 });
 
-// Generate video with Runway Gen-4 Turbo (costs tokens)
+// Generate video (costs tokens)
 router.post('/generate-video', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.body;
     if (!companionId) return res.status(400).json({ error: 'companionId required' });
-
-    const runwayKey = process.env.RUNWAYML_API_SECRET || process.env.RUNWAY_API_KEY;
-    if (!runwayKey) {
-      return res.status(400).json({ error: 'Video generation not configured. RUNWAYML_API_SECRET needed.' });
-    }
 
     const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
     if (comp.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
@@ -335,13 +440,16 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Video of ${companion.name}`);
 
-    // Step 1: Generate a scene image
+    // Step 1: Generate a scene image first (with character consistency via Gemini)
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
     const { setting, outfit } = getRandomScene();
-    const prompt = `Ultra realistic photograph of a beautiful young ${gender}, ${setting}, ${outfit}. Photorealistic, high resolution, candid pose`;
+    const prompt = `Show this exact same person ${setting}, ${outfit}. Keep the same face. Ultra realistic, photorealistic, high resolution`;
 
-    let sceneBuffer = await generateWithTogetherAI(prompt);
-    if (!sceneBuffer) sceneBuffer = await generateWithOpenAI(prompt + '. Safe for work, fully clothed.');
+    let sceneBuffer = await generateWithGemini(prompt, companion.avatar_url);
+    if (!sceneBuffer) {
+      const fallbackPrompt = `Ultra realistic photograph of a beautiful young ${gender}, ${setting}, ${outfit}. Photorealistic`;
+      sceneBuffer = await generateWithOpenAI(fallbackPrompt);
+    }
 
     if (!sceneBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.video, req.user.id]);
@@ -349,140 +457,53 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     }
 
     const sceneFilename = `vscene-${Date.now()}.png`;
-    fs.writeFileSync(path.join(uploadDir, sceneFilename), sceneBuffer);
+    const scenePath = path.join(uploadDir, sceneFilename);
+    fs.writeFileSync(scenePath, sceneBuffer);
 
-    // Step 2: Face swap if available
-    let finalImgFilename = sceneFilename;
-    if (companion.avatar_url && process.env.REPLICATE_API_TOKEN) {
-      const sceneUrl = getPublicUrl(req, `/uploads/${sceneFilename}`);
-      const avatarUrl = getPublicUrl(req, companion.avatar_url);
-      const swappedBuffer = await faceSwap(sceneUrl, avatarUrl);
-      if (swappedBuffer) {
-        finalImgFilename = `vswapped-${Date.now()}.png`;
-        fs.writeFileSync(path.join(uploadDir, finalImgFilename), swappedBuffer);
-        try { fs.unlinkSync(path.join(uploadDir, sceneFilename)); } catch {}
-      }
+    // Step 2: Convert image to video
+    const motionPrompt = `${gender} gently smiling, subtle natural movement, soft breeze, cinematic`;
+
+    // Try Pixverse first (free), then Runway (paid)
+    let videoBuffer = await generateVideoWithPixverse(`/uploads/${sceneFilename}`, motionPrompt);
+
+    if (!videoBuffer && (process.env.RUNWAYML_API_SECRET || process.env.RUNWAY_API_KEY)) {
+      videoBuffer = await generateVideoWithRunway(sceneBuffer, motionPrompt);
     }
 
-    // Step 3: Convert image to video using Runway Gen-4 Turbo
-    const imageForVideo = fs.readFileSync(path.join(uploadDir, finalImgFilename));
-    const dataUri = `data:image/png;base64,${imageForVideo.toString('base64')}`;
-
-    console.log('🎬 Starting Runway Gen-4 Turbo video generation...');
-
-    // Create task
-    const createRes = await fetch('https://api.dev.runwayml.com/v1/image_to_video', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${runwayKey}`,
-        'X-Runway-Version': '2024-11-06',
-      },
-      body: JSON.stringify({
-        model: 'gen4_turbo',
-        promptImage: dataUri,
-        promptText: `${gender} gently smiling, subtle natural movement, soft breeze, cinematic lighting, photorealistic`,
-        ratio: '720:1280',
-        duration: 5,
-      }),
-    });
-
-    if (!createRes.ok) {
-      const errText = await createRes.text();
-      console.error('Runway create error:', createRes.status, errText.substring(0, 300));
-      // Fallback to image
-      const finalUrl = `/uploads/${finalImgFilename}`;
-      await pool.query(
-        `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-        [req.user.id, companionId, '📸', finalUrl]
-      );
-      // Partial refund (image was created, video failed)
-      const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
-      if (refund > 0) await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
-      return res.json({ image_url: finalUrl, video_url: null, caption: '📸', note: 'Runway error, showing image instead.' });
-    }
-
-    const taskData = await createRes.json();
-    const taskId = taskData.id;
-    console.log(`🎬 Runway task created: ${taskId}`);
-
-    // Poll for result (max 120 seconds)
-    let videoUrl = null;
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 3000));
-
-      const pollRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
-        headers: {
-          'Authorization': `Bearer ${runwayKey}`,
-          'X-Runway-Version': '2024-11-06',
-        },
-      });
-
-      if (!pollRes.ok) continue;
-      const pollData = await pollRes.json();
-
-      if (pollData.status === 'SUCCEEDED') {
-        videoUrl = pollData.output?.[0] || pollData.output?.video || pollData.artifactUrl;
-        // Try various output formats
-        if (!videoUrl && Array.isArray(pollData.output)) videoUrl = pollData.output[0];
-        if (!videoUrl && pollData.output?.url) videoUrl = pollData.output.url;
-        console.log('✅ Runway video completed:', videoUrl?.substring(0, 100));
-        break;
+    if (videoBuffer) {
+      let videoUrl;
+      if (Buffer.isBuffer(videoBuffer)) {
+        const videoFilename = `video-${Date.now()}.mp4`;
+        fs.writeFileSync(path.join(uploadDir, videoFilename), videoBuffer);
+        videoUrl = `/uploads/${videoFilename}`;
+      } else {
+        videoUrl = videoBuffer; // URL string from API
       }
 
-      if (pollData.status === 'FAILED') {
-        console.error('Runway task failed:', pollData.failure || pollData.failureCode);
-        break;
-      }
-
-      // Still running
-      console.log(`🎬 Runway polling... status: ${pollData.status} (${i + 1}/40)`);
-    }
-
-    if (videoUrl) {
-      // Download video and save locally
-      try {
-        const videoRes = await fetch(videoUrl);
-        if (videoRes.ok) {
-          const videoBuf = Buffer.from(await videoRes.arrayBuffer());
-          const videoFilename = `video-${Date.now()}.mp4`;
-          fs.writeFileSync(path.join(uploadDir, videoFilename), videoBuf);
-          const localVideoUrl = `/uploads/${videoFilename}`;
-
-          await pool.query(
-            `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
-            [req.user.id, companionId, '🎬', localVideoUrl]
-          );
-
-          // Clean up scene image
-          try { fs.unlinkSync(path.join(uploadDir, finalImgFilename)); } catch {}
-
-          console.log(`✅ Video saved: ${videoFilename}`);
-          return res.json({ video_url: localVideoUrl, caption: '🎬' });
-        }
-      } catch (e) {
-        console.error('Video download error:', e.message);
-      }
-
-      // If download failed, return the remote URL
       await pool.query(
         `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
         [req.user.id, companionId, '🎬', videoUrl]
       );
+
+      try { fs.unlinkSync(scenePath); } catch {}
+      console.log('✅ Video generated');
       return res.json({ video_url: videoUrl, caption: '🎬' });
     }
 
-    // Video generation failed, fallback to image
-    console.log('⚠️ Runway timed out or failed, falling back to image');
-    const finalUrl = `/uploads/${finalImgFilename}`;
+    // Fallback: return the scene image, partial refund
+    const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
+    if (refund > 0) {
+      await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
+    }
+
+    const imageUrl = `/uploads/${sceneFilename}`;
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', finalUrl]
+      [req.user.id, companionId, '📸', imageUrl]
     );
-    const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
-    if (refund > 0) await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
 
-    res.json({ image_url: finalUrl, video_url: null, caption: '📸', note: 'Video timed out, showing image.' });
+    console.log('⚠️ Video APIs unavailable, showing image instead');
+    res.json({ image_url: imageUrl, video_url: null, caption: '📸', note: 'Video API not available. Showing image. Partial refund applied.' });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video gen error:', err);

@@ -281,3 +281,25 @@ textarea.input { resize:vertical; min-height:70px; }
   .features-grid { grid-template-columns: 1fr; }
   .btn-lg { padding: 11px 20px; font-size: 13px; }
 }
+
+/* Candy chat mobile */
+@media (max-width: 768px) {
+  .candy-chat { position: fixed; inset: 0; z-index: 60; }
+  .candy-chat .candy-messages { padding: 8px 10px; }
+  .candy-chat .candy-msg { max-width: 90%; }
+  .candy-chat .candy-bubble { padding: 8px 11px; border-radius: 14px; }
+  .candy-chat .candy-bubble-text { font-size: 13px; }
+  .candy-chat .candy-media-img,
+  .candy-chat .candy-media-video { max-width: 200px; border-radius: 10px; }
+  .candy-chat .candy-header { padding: 8px 10px; }
+  .candy-chat .candy-input-bar { padding: 6px 8px; }
+  .candy-chat .candy-input-row { gap: 6px; }
+  .candy-chat .candy-text-input { padding: 8px 14px; font-size: 13px; }
+  .candy-chat .candy-send-btn,
+  .candy-chat .candy-mic-btn { width: 36px; height: 36px; }
+  .candy-chat .candy-action-row { flex-wrap: wrap; gap: 4px; }
+  .candy-chat .candy-action-label { font-size: 10px; width: 100%; }
+  .candy-chat .candy-action-btn { font-size: 11px; padding: 5px 8px; }
+  .candy-chat .candy-msg-avatar { width: 24px; height: 24px; }
+  .candy-chat .candy-msg-avatar img { width: 24px; height: 24px; }
+}

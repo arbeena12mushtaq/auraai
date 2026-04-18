@@ -152,18 +152,25 @@ export function PricingPage({ onRequireAuth }) {
         window.location.href = data.url;
         return;
       }
+      if (data.demo && data.success) {
+        // Admin demo mode activated by backend
+        await refreshUser();
+        alert(`Activated ${getPlanInfo(planId).name} plan with ${getPlanInfo(planId).tokens} tokens!`);
+        setLoading(null);
+        return;
+      }
     } catch (err) {
-      // If Stripe not configured and user is admin, allow demo
+      // Fallback: try legacy subscribe for admin
       if (user.is_admin) {
         try {
           await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
           await refreshUser();
-          alert(`Admin demo: activated ${getPlanInfo(planId).name} plan with ${getPlanInfo(planId).tokens} tokens!`);
+          alert(`Activated ${getPlanInfo(planId).name} plan with ${getPlanInfo(planId).tokens} tokens!`);
         } catch (err2) {
           alert(err2.error || 'Failed');
         }
       } else {
-        alert(err.error || 'Payment system not configured yet. Coming soon!');
+        alert(err.error || 'Payment system coming soon! Contact support.');
       }
     }
     setLoading(null);
