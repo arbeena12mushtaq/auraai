@@ -56,6 +56,7 @@ async function initDatabase() {
           description TEXT,
           tagline VARCHAR(500),
           avatar_url TEXT,
+          avatar_seed INTEGER DEFAULT 0,
           is_preset BOOLEAN DEFAULT FALSE,
           is_public BOOLEAN DEFAULT FALSE,
           created_at TIMESTAMPTZ DEFAULT NOW()
@@ -113,6 +114,7 @@ async function initDatabase() {
         ALTER TABLE users ADD COLUMN IF NOT EXISTS tokens INTEGER DEFAULT 0;
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'text';
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url TEXT;
+        ALTER TABLE companions ADD COLUMN IF NOT EXISTS avatar_seed INTEGER DEFAULT 0;
       `).catch(() => {});
 
       // Create token_ledger if not exists (already in CREATE above, this is safe)

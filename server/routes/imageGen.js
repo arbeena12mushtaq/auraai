@@ -10,8 +10,6 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const TOKEN_COSTS = { image: 5, video: 15 };
 
-// ===== Helpers =====
-
 async function deductTokens(userId, amount, action, description) {
   const user = await pool.query('SELECT tokens, is_admin FROM users WHERE id = $1', [userId]);
   if (!user.rows[0]) throw { code: 'NOT_FOUND', error: 'User not found' };
@@ -27,68 +25,161 @@ async function deductTokens(userId, amount, action, description) {
   return true;
 }
 
-function getPublicUrl(req) {
-  return process.env.CLIENT_URL || `https://${req.headers.host}`;
+function sanitizePrompt(text) {
+  return (text || '')
+    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx)\b/gi, '')
+    .replace(/\s+/g, ' ').trim();
 }
 
 function getRandomScene() {
-  const settings = [
-    'at a cozy coffee shop, warm lighting, sitting by window',
-    'at the beach during golden hour, ocean waves behind',
-    'in a modern apartment, on a sofa, soft daylight',
-    'at a rooftop restaurant, city lights behind, night',
-    'in a garden with flowers, soft sunlight',
-    'at a park in autumn, golden leaves, warm light',
-    'in a bedroom, morning sunlight through curtains',
-    'on a cobblestone street at sunset, European city',
-    'by a pool, turquoise water, sunny day',
-    'in a kitchen cooking, natural window light',
-    'at a gym, sporty pose, bright lighting',
-    'on a balcony overlooking ocean, sunset sky',
-    'in a luxury car, leather seats, cinematic light',
-    'at a festival, colorful lights in background',
+  const scenes = [
+    { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'casual elegant dress' },
+    { setting: 'beach during golden hour, ocean behind', outfit: 'summer sundress' },
+    { setting: 'modern apartment, soft daylight, on sofa', outfit: 'cozy sweater and jeans' },
+    { setting: 'rooftop restaurant, city lights, night', outfit: 'elegant evening wear' },
+    { setting: 'garden with flowers, soft sunlight', outfit: 'floral blouse and skirt' },
+    { setting: 'park in autumn, golden leaves', outfit: 'leather jacket and boots' },
+    { setting: 'bedroom, morning sunlight through curtains', outfit: 'silk pajamas' },
+    { setting: 'cobblestone street at sunset, European city', outfit: 'fitted top and skirt' },
+    { setting: 'swimming pool area, sunny day', outfit: 'casual athletic wear' },
+    { setting: 'kitchen cooking, natural window light', outfit: 'apron over casual clothes' },
+    { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder top and jeans' },
+    { setting: 'luxury car interior, leather seats', outfit: 'blazer and silk blouse' },
   ];
-  const outfits = [
-    'casual dress', 'fitted top and jeans', 'cozy sweater',
-    'summer sundress', 'crop top and skirt', 'elegant evening wear',
-    'silk blouse and trousers', 'athletic wear', 'leather jacket outfit',
-    'off-shoulder top', 'designer outfit', 'blazer and pants',
+  const cameras = [
+    'selfie angle, phone held at arm length, slightly above eye level, front facing',
+    'close-up portrait, face filling frame, shallow depth of field, looking at camera',
+    'medium shot from waist up, 3/4 angle view, natural pose',
+    'full body shot, straight on, standing pose, eye level camera',
+    'over the shoulder selfie, looking back at camera with a smile',
+    'low angle shot looking up, dramatic perspective, confident pose',
+    'candid side profile, natural moment, soft focus background',
+    'mirror selfie, phone visible in hand, casual pose',
+    'sitting pose, shot from slightly above, relaxed and natural',
+    'walking towards camera, mid-stride, street style photography',
+    'leaning against wall, 3/4 body, casual cool pose',
+    'close-up selfie, big smile, slightly tilted head, warm expression',
   ];
   return {
-    setting: settings[Math.floor(Math.random() * settings.length)],
-    outfit: outfits[Math.floor(Math.random() * outfits.length)],
+    setting: scenes[Math.floor(Math.random() * scenes.length)].setting,
+    outfit: scenes[Math.floor(Math.random() * scenes.length)].outfit,
+    camera: cameras[Math.floor(Math.random() * cameras.length)],
   };
 }
 
-// ===== Pollinations.ai — FREE, no API key =====
-// Supports &image= param for character reference consistency
+// ===== Pollinations.ai — FREE, for avatar creation =====
 
-async function generateWithPollinations(prompt, width = 1024, height = 1024, seed = null, referenceImageUrl = null) {
+async function generateWithPollinations(prompt, width = 1024, height = 1024) {
   try {
-    const usedSeed = seed || Math.floor(Math.random() * 999999);
-    const encodedPrompt = encodeURIComponent(prompt);
-    let url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${usedSeed}&nologo=true&enhance=true&model=flux`;
+    const seed = Math.floor(Math.random() * 999999);
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
+    console.log(`🌸 Pollinations (seed:${seed})...`);
 
-    // If reference image URL provided, add it for character consistency
-    if (referenceImageUrl) {
-      url += `&image=${encodeURIComponent(referenceImageUrl)}`;
-      console.log('🌸 Pollinations with reference image for consistency');
-    } else {
-      console.log('🌸 Pollinations text-to-image');
-    }
-
-    const res = await fetch(url, { timeout: 60000 });
-    if (!res.ok) { console.error('Pollinations error:', res.status); return null; }
-
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('image')) { console.error('Pollinations: not image'); return null; }
+    const res = await fetch(url);
+    if (!res.ok) { console.error('Pollinations:', res.status); return null; }
+    if (!(res.headers.get('content-type') || '').includes('image')) return null;
 
     const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.length < 5000) { console.error('Pollinations: too small'); return null; }
+    if (buffer.length < 3000) return null;
 
-    console.log(`✅ Pollinations image (${Math.round(buffer.length / 1024)}KB, seed:${usedSeed})`);
-    return { buffer, seed: usedSeed };
-  } catch (err) { console.error('Pollinations error:', err.message); return null; }
+    console.log(`✅ Pollinations (${Math.round(buffer.length / 1024)}KB)`);
+    return buffer;
+  } catch (err) { console.error('Pollinations:', err.message); return null; }
+}
+
+// ===== OpenAI GPT Image Edit — Character-consistent image editing =====
+// Uses gpt-image-1 to edit avatar into new scenes while keeping same face
+// Uses the SAME OpenAI API key the client already has — no new account needed
+
+async function editWithGPTImage(avatarImagePath, editPrompt) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) { console.log('⚠️ No OPENAI_API_KEY'); return null; }
+
+  try {
+    console.log('🎨 GPT Image edit (same face, new scene)...');
+    console.log('🎨 Edit:', editPrompt.substring(0, 100) + '...');
+
+    const fullPath = path.join(uploadDir, path.basename(avatarImagePath));
+    if (!fs.existsSync(fullPath)) { console.error('Avatar file not found:', fullPath); return null; }
+
+    // Read avatar image as base64 data URL
+    const imageBuffer = fs.readFileSync(fullPath);
+    const base64Image = imageBuffer.toString('base64');
+    const dataUrl = `data:image/png;base64,${base64Image}`;
+
+    const res = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-image-1',
+        image: [{ type: 'input_image', input_image: { image_url: dataUrl } }],
+        prompt: editPrompt,
+        quality: 'low',
+        size: '1024x1024',
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('GPT Image error:', res.status, errText.substring(0, 300));
+      
+      // Fallback: try multipart form upload instead
+      console.log('🎨 Trying multipart form upload...');
+      const FormData = require('form-data');
+      const fd = new FormData();
+      fd.append('model', 'gpt-image-1');
+      fd.append('image[]', fs.createReadStream(fullPath));
+      fd.append('prompt', editPrompt);
+      fd.append('quality', 'low');
+      fd.append('size', '1024x1024');
+
+      const res2 = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, ...fd.getHeaders() },
+        body: fd,
+      });
+
+      if (!res2.ok) {
+        console.error('GPT Image multipart error:', res2.status, (await res2.text()).substring(0, 300));
+        return null;
+      }
+
+      const data2 = await res2.json();
+      const b64_2 = data2.data?.[0]?.b64_json;
+      if (b64_2) {
+        console.log('✅ GPT Image edit done (multipart)');
+        return Buffer.from(b64_2, 'base64');
+      }
+      const url2 = data2.data?.[0]?.url;
+      if (url2) {
+        const dlRes = await fetch(url2);
+        if (dlRes.ok) { console.log('✅ GPT Image edit done'); return Buffer.from(await dlRes.arrayBuffer()); }
+      }
+      return null;
+    }
+
+    const data = await res.json();
+    const b64 = data.data?.[0]?.b64_json;
+    if (b64) {
+      console.log('✅ GPT Image edit done');
+      return Buffer.from(b64, 'base64');
+    }
+    
+    const url = data.data?.[0]?.url;
+    if (url) {
+      const dlRes = await fetch(url);
+      if (dlRes.ok) { console.log('✅ GPT Image edit done'); return Buffer.from(await dlRes.arrayBuffer()); }
+    }
+
+    console.error('GPT Image: no image in response');
+    return null;
+  } catch (err) {
+    console.error('GPT Image error:', err.message);
+    return null;
+  }
 }
 
 // ===== DALL-E fallback =====
@@ -102,60 +193,49 @@ async function generateWithOpenAI(prompt) {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt: prompt + '. Tasteful, appropriate, fully clothed, professional photo.',
+        model: 'dall-e-3', prompt: prompt + '. Tasteful, professional.',
         n: 1, size: '1024x1024', quality: 'standard', response_format: 'b64_json',
       }),
     });
-    if (!res.ok) { console.error('DALL-E error:', res.status); return null; }
+    if (!res.ok) { console.error('DALL-E:', res.status); return null; }
     const data = await res.json();
     const b64 = data.data?.[0]?.b64_json;
-    if (!b64) return null;
-    console.log('✅ DALL-E image generated');
-    return { buffer: Buffer.from(b64, 'base64'), seed: 0 };
-  } catch (err) { console.error('DALL-E error:', err.message); return null; }
+    return b64 ? Buffer.from(b64, 'base64') : null;
+  } catch (err) { console.error('DALL-E:', err.message); return null; }
 }
 
-// ===== Pixverse Video (free daily credits) =====
+// ===== Pixverse Video =====
 
 async function generateVideoWithPixverse(imageFilePath, prompt) {
   const apiKey = process.env.PIXVERSE_API_KEY;
   if (!apiKey) { console.log('⚠️ No PIXVERSE_API_KEY'); return null; }
 
   try {
-    console.log('🎬 Pixverse: uploading image...');
-
+    console.log('🎬 Pixverse: uploading...');
     const fullPath = path.join(uploadDir, path.basename(imageFilePath));
-    if (!fs.existsSync(fullPath)) { console.error('Pixverse: file not found'); return null; }
+    if (!fs.existsSync(fullPath)) return null;
 
-    // Upload using file stream (form-data with actual file)
-    const FormData = require('form-data');
-    const formData = new FormData();
-    formData.append('image', fs.createReadStream(fullPath));
+    const FD = require('form-data');
+    const fd = new FD();
+    fd.append('image', fs.createReadStream(fullPath), { filename: 'scene.png', contentType: 'image/png' });
 
     const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
       method: 'POST',
-      headers: {
-        'API-KEY': apiKey,
-        ...formData.getHeaders(),
-      },
-      body: formData,
+      headers: { 'API-KEY': apiKey, ...fd.getHeaders() },
+      body: fd,
     });
 
     if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      console.error('Pixverse upload error:', uploadRes.status, errText.substring(0, 200));
+      console.error('Pixverse upload:', uploadRes.status, (await uploadRes.text()).substring(0, 200));
       return null;
     }
 
     const uploadData = await uploadRes.json();
-    console.log('Pixverse upload response:', JSON.stringify(uploadData).substring(0, 200));
-    const imgId = uploadData.Resp?.img_id || uploadData.Resp?.id;
-    if (!imgId) { console.error('Pixverse: no img_id'); return null; }
+    const imgId = uploadData?.Resp?.img_id || uploadData?.Resp?.id;
+    if (!imgId) { console.error('Pixverse: no img_id', JSON.stringify(uploadData).substring(0, 200)); return null; }
 
-    console.log(`🎬 Pixverse uploaded, img_id: ${imgId}`);
+    console.log(`🎬 Pixverse img_id: ${imgId}`);
 
-    // Generate video
     const genRes = await fetch('https://app-api.pixverse.ai/openapi/v2/video/img/generate', {
       method: 'POST',
       headers: { 'API-KEY': apiKey, 'Content-Type': 'application/json' },
@@ -163,158 +243,132 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
         duration: 5, img_id: imgId, model: 'v5.6',
         motion_mode: 'normal', quality: '540p',
         prompt: prompt || 'gentle smile, subtle movement',
-        negative_prompt: 'fast motion, distortion, blur',
+        negative_prompt: 'fast motion, distortion',
       }),
     });
-
-    if (!genRes.ok) {
-      console.error('Pixverse gen error:', genRes.status, (await genRes.text()).substring(0, 200));
-      return null;
-    }
+    if (!genRes.ok) { console.error('Pixverse gen:', genRes.status, (await genRes.text()).substring(0, 200)); return null; }
 
     const genData = await genRes.json();
     const videoId = genData.Resp?.id;
-    if (!videoId) { console.error('Pixverse: no video id'); return null; }
+    if (!videoId) return null;
 
-    console.log(`🎬 Pixverse generating video, id: ${videoId}`);
+    console.log(`🎬 Pixverse video: ${videoId}`);
 
-    // Poll (max 2 min)
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 3000));
       try {
-        const pollRes = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/${videoId}`, {
-          headers: { 'API-KEY': apiKey },
-        });
-        if (!pollRes.ok) continue;
-        const pollData = await pollRes.json();
-        const v = pollData.Resp;
-        if (v?.status === 1 && v?.url) {
+        const p = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/${videoId}`, { headers: { 'API-KEY': apiKey } });
+        if (!p.ok) continue;
+        const d = await p.json();
+        if (d.Resp?.status === 1 && d.Resp?.url) {
           console.log('✅ Pixverse video done');
-          const dlRes = await fetch(v.url);
-          if (dlRes.ok) return Buffer.from(await dlRes.arrayBuffer());
-          return v.url;
+          const dl = await fetch(d.Resp.url);
+          return dl.ok ? Buffer.from(await dl.arrayBuffer()) : d.Resp.url;
         }
-        if (v?.status === 4 || v?.status === 6 || v?.status === 7 || v?.status === 8) {
-          console.error('Pixverse video failed, status:', v.status);
-          return null;
-        }
+        if ([4, 6, 7, 8].includes(d.Resp?.status)) return null;
       } catch {}
     }
-    console.error('Pixverse timeout');
     return null;
-  } catch (err) { console.error('Pixverse error:', err.message); return null; }
+  } catch (err) { console.error('Pixverse:', err.message); return null; }
 }
 
 // ===== ROUTES =====
 
-// --- Avatar creation (FREE) ---
+// --- Avatar creation (FREE via Pollinations) ---
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
-    if (req.body.description && !contentFilter(req.body.description)) {
-      return res.status(400).json({ error: 'Description contains inappropriate content' });
-    }
     if (!req.body.description?.trim()) {
       return res.status(400).json({ error: 'Please provide a description.' });
     }
 
     const gender = req.body.category === 'Guys' ? 'man' : 'woman';
     const isAnime = req.body.art_style === 'Anime';
-    const desc = req.body.description
-      .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|busty|thicc|seductive|lingerie|bikini|succubus|demon)\b/gi, '')
-      .replace(/\s+/g, ' ').trim();
+    const desc = sanitizePrompt(req.body.description);
 
     let prompt;
     if (isAnime) {
-      prompt = `beautiful anime character portrait, ${gender}, ${desc}, anime art style, vibrant colors, detailed eyes, soft lighting, casual outfit, high quality illustration`;
+      prompt = `anime character portrait, ${gender}, ${desc}, anime art, vibrant colors, detailed eyes, front facing, looking at camera`;
     } else {
-      prompt = `photorealistic portrait of a ${gender}, ${desc}, professional photography, 85mm lens, natural lighting, genuine smile, casual clothing, high resolution, detailed skin, sharp focus, front facing`;
+      prompt = `photorealistic portrait of a ${gender}, ${desc}, professional photography, 85mm lens, natural lighting, detailed skin, front facing, looking at camera, high resolution`;
     }
 
-    console.log('🎨 Avatar:', prompt.substring(0, 80) + '...');
+    console.log('🎨 Avatar prompt:', prompt);
 
-    // Generate with a fixed seed so we can reuse it for consistency
-    const avatarSeed = Math.floor(Math.random() * 999999);
-    let result = await generateWithPollinations(prompt, 1024, 1024, avatarSeed);
-    let provider = result ? 'pollinations' : '';
+    let imageBuffer = await generateWithPollinations(prompt);
+    let provider = imageBuffer ? 'pollinations' : '';
 
-    if (!result) {
-      result = await generateWithOpenAI(prompt);
-      if (result) provider = 'openai';
+    if (!imageBuffer) {
+      imageBuffer = await generateWithOpenAI(prompt);
+      if (imageBuffer) provider = 'openai';
     }
 
-    if (!result) {
-      return res.status(500).json({ error: 'Image generation failed. Try uploading manually.' });
-    }
+    if (!imageBuffer) return res.status(500).json({ error: 'Image generation failed. Try uploading.' });
 
     const filename = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
-    fs.writeFileSync(path.join(uploadDir, filename), result.buffer);
-    console.log(`✅ Avatar saved: ${filename} (${provider}, seed:${result.seed})`);
+    fs.writeFileSync(path.join(uploadDir, filename), imageBuffer);
+    console.log(`✅ Avatar: ${filename} (${provider})`);
 
-    res.json({ avatar_url: `/uploads/${filename}`, provider, seed: result.seed });
+    res.json({ avatar_url: `/uploads/${filename}`, provider });
   } catch (err) {
     console.error('Avatar error:', err);
     res.status(500).json({ error: 'Failed to generate avatar' });
   }
 });
 
-// --- Scene photo with character consistency (costs tokens) ---
+// --- Scene photo: FLUX Kontext edits the avatar into a new scene ---
 router.post('/generate-scene', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.body;
     if (!companionId) return res.status(400).json({ error: 'companionId required' });
 
     const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
-    if (!comp.rows.length) return res.status(404).json({ error: 'Companion not found' });
+    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
     const companion = comp.rows[0];
 
     await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Photo of ${companion.name}`);
 
-    const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const isAnime = companion.art_style === 'Anime';
-    const { setting, outfit } = getRandomScene();
-    const desc = (companion.description || '')
-      .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|succubus|demon)\b/gi, '').trim();
+    const { setting, outfit, camera } = getRandomScene();
 
-    // Build identity-preserving prompt
-    let prompt;
-    if (isAnime) {
-      prompt = `anime ${gender}, ${desc}, ${setting}, wearing ${outfit}, anime art, vibrant, detailed`;
-    } else {
-      prompt = `Use the provided reference image as identity anchor. This is the SAME person. Preserve exact face, facial structure, skin tone, hairstyle, body proportions. Change ONLY: outfit to ${outfit}, setting to ${setting}. Do not alter identity. Photorealistic, cinematic lighting, detailed skin texture, high resolution`;
+    // Build the edit prompt with camera angle
+    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Photorealistic, natural lighting, high resolution.`;
+
+    console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
+
+    // Get the avatar's public URL for fal.ai to fetch
+
+    let imageBuffer = null;
+    let provider = '';
+
+    // Try GPT Image edit first (character consistent — uses existing OpenAI key)
+    if (companion.avatar_url) {
+      imageBuffer = await editWithGPTImage(companion.avatar_url, editPrompt);
+      if (imageBuffer) provider = 'gpt-image-edit';
     }
 
-    console.log('📸 Scene:', prompt.substring(0, 80) + '...');
-
-    // Use avatar as reference image for character consistency
-    let referenceUrl = null;
-    if (companion.avatar_url && !isAnime) {
-      const baseUrl = getPublicUrl(req);
-      referenceUrl = `${baseUrl}${companion.avatar_url}`;
-      console.log('📸 Reference image:', referenceUrl);
+    // Fallback to Pollinations (no consistency)
+    if (!imageBuffer) {
+      const gender = companion.category === 'Guys' ? 'man' : 'woman';
+      const desc = sanitizePrompt(companion.description || '');
+      const fallbackPrompt = `photorealistic ${gender}, ${desc}, ${setting}, wearing ${outfit}, ${camera}, professional photo, natural lighting`;
+      imageBuffer = await generateWithPollinations(fallbackPrompt);
+      if (imageBuffer) provider = 'pollinations-fallback';
     }
 
-    let result = await generateWithPollinations(prompt, 1024, 1024, null, referenceUrl);
-    let provider = result ? 'pollinations' : '';
-
-    if (!result) {
-      // Fallback without reference
-      const fallbackPrompt = `photorealistic ${gender}, ${desc}, ${setting}, wearing ${outfit}, professional photo, natural lighting, high res`;
-      result = await generateWithPollinations(fallbackPrompt);
-      if (result) provider = 'pollinations-fallback';
+    // Fallback to DALL-E
+    if (!imageBuffer) {
+      const gender = companion.category === 'Guys' ? 'man' : 'woman';
+      const desc = sanitizePrompt(companion.description || '');
+      imageBuffer = await generateWithOpenAI(`${gender}, ${desc}, ${setting}, wearing ${outfit}`);
+      if (imageBuffer) provider = 'openai-fallback';
     }
 
-    if (!result) {
-      result = await generateWithOpenAI(`${gender}, ${desc}, ${setting}, wearing ${outfit}`);
-      if (result) provider = 'openai';
-    }
-
-    if (!result) {
+    if (!imageBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.image, req.user.id]);
       return res.status(500).json({ error: 'Image generation failed. Tokens refunded.' });
     }
 
     const filename = `scene-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
-    fs.writeFileSync(path.join(uploadDir, filename), result.buffer);
+    fs.writeFileSync(path.join(uploadDir, filename), imageBuffer);
     const finalUrl = `/uploads/${filename}`;
 
     await pool.query(
@@ -331,51 +385,45 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
   }
 });
 
-// --- Video generation (costs tokens) ---
+// --- Video: generate scene image then animate ---
 router.post('/generate-video', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.body;
     if (!companionId) return res.status(400).json({ error: 'companionId required' });
 
     const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
-    if (!comp.rows.length) return res.status(404).json({ error: 'Companion not found' });
+    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
     const companion = comp.rows[0];
 
     await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Video of ${companion.name}`);
 
-    const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const isAnime = companion.art_style === 'Anime';
-    const { setting, outfit } = getRandomScene();
-    const desc = (companion.description || '')
-      .replace(/\b(sexy|hot|nude|naked|nsfw|explicit|succubus|demon)\b/gi, '').trim();
+    const { setting, outfit, camera } = getRandomScene();
 
-    // Generate scene image first (with reference for consistency)
-    let prompt;
-    if (isAnime) {
-      prompt = `anime ${gender}, ${desc}, ${setting}, wearing ${outfit}, anime, detailed`;
-    } else {
-      prompt = `Use the provided reference image. Same person. Preserve face, identity. Setting: ${setting}, wearing ${outfit}. Photorealistic, cinematic`;
+    // Step 1: Generate scene image with camera angle
+    let sceneBuffer = null;
+    const editPrompt = `Change setting to: ${setting}. Change outfit to: ${outfit}. Camera angle: ${camera}. Keep same person, same face. Photorealistic, natural lighting.`;
+
+    if (companion.avatar_url) {
+      sceneBuffer = await editWithGPTImage(companion.avatar_url, editPrompt);
     }
 
-    let referenceUrl = null;
-    if (companion.avatar_url && !isAnime) {
-      referenceUrl = `${getPublicUrl(req)}${companion.avatar_url}`;
+    if (!sceneBuffer) {
+      const gender = companion.category === 'Guys' ? 'man' : 'woman';
+      const desc = sanitizePrompt(companion.description || '');
+      sceneBuffer = await generateWithPollinations(`photorealistic ${gender}, ${desc}, ${setting}, wearing ${outfit}`);
     }
 
-    let result = await generateWithPollinations(prompt, 1024, 1024, null, referenceUrl);
-    if (!result) result = await generateWithOpenAI(`${gender}, ${desc}, ${setting}, wearing ${outfit}`);
-
-    if (!result) {
+    if (!sceneBuffer) {
       await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [TOKEN_COSTS.video, req.user.id]);
-      return res.status(500).json({ error: 'Image generation failed. Tokens refunded.' });
+      return res.status(500).json({ error: 'Image failed. Tokens refunded.' });
     }
 
-    const sceneFilename = `vscene-${Date.now()}.png`;
-    fs.writeFileSync(path.join(uploadDir, sceneFilename), result.buffer);
+    const sceneFile = `vscene-${Date.now()}.png`;
+    fs.writeFileSync(path.join(uploadDir, sceneFile), sceneBuffer);
 
-    // Convert to video
-    const motionPrompt = `${gender} gently smiling, subtle natural movement, cinematic`;
-    let videoBuffer = await generateVideoWithPixverse(sceneFilename, motionPrompt);
+    // Step 2: Animate with Pixverse
+    const gender = companion.category === 'Guys' ? 'man' : 'woman';
+    const videoBuffer = await generateVideoWithPixverse(sceneFile, `${gender} gently smiling, subtle movement, cinematic`);
 
     if (videoBuffer) {
       let videoUrl;
@@ -386,26 +434,24 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
       } else {
         videoUrl = videoBuffer;
       }
-
       await pool.query(
         `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
         [req.user.id, companionId, '🎬', videoUrl]
       );
-      try { fs.unlinkSync(path.join(uploadDir, sceneFilename)); } catch {}
-      console.log('✅ Video generated');
+      try { fs.unlinkSync(path.join(uploadDir, sceneFile)); } catch {}
       return res.json({ video_url: videoUrl, caption: '🎬' });
     }
 
-    // Fallback: return image, partial refund
+    // Video failed — return image with partial refund
     const refund = TOKEN_COSTS.video - TOKEN_COSTS.image;
     if (refund > 0) await pool.query('UPDATE users SET tokens = tokens + $1 WHERE id = $2', [refund, req.user.id]);
 
-    const imageUrl = `/uploads/${sceneFilename}`;
+    const imgUrl = `/uploads/${sceneFile}`;
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', imageUrl]
+      [req.user.id, companionId, '📸', imgUrl]
     );
-    res.json({ image_url: imageUrl, video_url: null, caption: '📸', note: 'Video unavailable. Showing image. Partial refund.' });
+    res.json({ image_url: imgUrl, video_url: null, caption: '📸', note: 'Video unavailable. Partial refund.' });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', err);

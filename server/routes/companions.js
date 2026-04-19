@@ -110,10 +110,10 @@ router.post('/', authMiddleware, upload.single('avatar'), async (req, res) => {
     }
 
     let avatar_url = null;
+    let avatar_seed = parseInt(req.body.avatar_seed) || 0;
     if (req.file) {
       avatar_url = `/uploads/${req.file.filename}`;
     } else if (req.body.generated_avatar_url) {
-      // Use the AI-generated avatar URL (already saved on server by /api/image/generate)
       avatar_url = req.body.generated_avatar_url;
     }
 
@@ -121,12 +121,12 @@ router.post('/', authMiddleware, upload.single('avatar'), async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO companions (user_id, name, category, art_style, ethnicity, age_range, eye_color, 
-       hair_style, hair_color, body_type, personality, voice, hobbies, description, tagline, avatar_url, is_public)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,false)
+       hair_style, hair_color, body_type, personality, voice, hobbies, description, tagline, avatar_url, avatar_seed, is_public)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,false)
        RETURNING *`,
       [req.user.id, name, category||'Girls', art_style||'Realistic', ethnicity, age_range,
        eye_color, hair_style, hair_color, body_type, personality, voice, parsedHobbies,
-       description, tagline || `${personality} companion`, avatar_url]
+       description, tagline || `${personality} companion`, avatar_url, avatar_seed]
     );
 
     res.status(201).json({ companion: result.rows[0] });

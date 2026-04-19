@@ -19,7 +19,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     name: '', category: 'Girls', art_style: 'Realistic',
     personality: 'Sweet & Caring', voice: 'Soft & Gentle',
     hobbies: [], description: '', avatarFile: null, avatarPreview: null,
-    generatedAvatarUrl: null,
+    generatedAvatarUrl: null, avatarSeed: 0,
   });
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
@@ -69,6 +69,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
         set('generatedAvatarUrl', data.avatar_url);
         set('avatarPreview', data.avatar_url);
         set('avatarFile', null);
+        set('avatarSeed', data.seed || 0);
       }
     } catch (err) {
       setError(err.error || 'Image generation failed. You can upload an image manually instead.');
@@ -92,6 +93,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
       formData.append('description', form.description);
       formData.append('tagline', `${form.personality} companion`);
       if (form.generatedAvatarUrl) formData.append('generated_avatar_url', form.generatedAvatarUrl);
+      if (form.avatarSeed) formData.append('avatar_seed', form.avatarSeed);
       if (form.avatarFile) formData.append('avatar', form.avatarFile);
 
       const data = await api('/companions', { method: 'POST', body: formData });
