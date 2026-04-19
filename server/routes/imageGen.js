@@ -233,7 +233,7 @@ async function generateVideoWithKling(imageFilePath, prompt) {
   const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
   const taskPath = process.env.KLING_TASK_GET_PATH;
-
+  console.log('KLING JWT TOKEN:', token);
   
   if (!createPath || !taskPath) {
     console.log('⚠️ Missing KLING_IMAGE_TO_VIDEO_PATH or KLING_TASK_GET_PATH');
