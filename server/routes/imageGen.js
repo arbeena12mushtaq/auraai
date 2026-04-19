@@ -414,7 +414,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change only the background to: ${setting}. Change only the outfit to: ${outfit}. Use camera angle: ${camera}. Preserve the exact same woman from the source image with no facial changes.`;
+    const editPrompt = `Change only the background to: ${setting}. Change only the outfit to: ${outfit}. Use camera angle: ${camera}. Keep the exact same woman, same face, same hairstyle, same wings. Do not change facial features.`;
     console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
