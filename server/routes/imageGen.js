@@ -223,15 +223,17 @@ async function generateVideoWithKling(imageFilePath, prompt) {
     return null;
   }
   
+  const now = Math.floor(Date.now() / 1000);
+  
   const token = jwt.sign(
     {
       iss: accessKey,
-      exp: Math.floor(Date.now() / 1000) + 3600
+      nbf: now,
+      exp: now + 3600
     },
     secretKey,
     { algorithm: 'HS256' }
   );
-
   
   const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
