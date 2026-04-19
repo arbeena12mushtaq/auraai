@@ -40,17 +40,19 @@ function sanitizePrompt(text) {
 }
 function getRandomScene() {
   const scenes = [
-  { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'elegant mini dress, high-fashion styling' },
-  { setting: 'beach during golden hour, ocean behind', outfit: 'luxury resort wear, flowing wrap, editorial style' },
-  { setting: 'modern apartment, soft daylight, on sofa', outfit: 'silky fitted loungewear, chic editorial fashion' },
-  { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black cocktail dress, bold glamorous styling' },
-  { setting: 'garden with flowers, soft sunlight', outfit: 'fitted couture dress, romantic elegant styling' },
-  { setting: 'park in autumn, golden leaves', outfit: 'form-fitting leather jacket and stylish skirt, editorial fashion look' },
-  { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear, elegant fashion look' },
-  { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable editorial styling' },
-  { setting: 'swimming pool area, sunny day', outfit: 'luxury poolside resort fashion, glamorous styling' },
-  { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder fitted top and sleek skirt, luxury fashion styling' },
-  { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
+  { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'elegant knit sweater and tailored trousers, chic styling' },
+  { setting: 'beach during golden hour, ocean behind', outfit: 'flowy maxi dress, bohemian resort styling' },
+  { setting: 'modern apartment, soft daylight, on sofa', outfit: 'casual chic blouse and jeans, relaxed editorial look' },
+  { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black evening dress with jacket, sophisticated styling' },
+  { setting: 'garden with flowers, soft sunlight', outfit: 'floral midi dress, romantic elegant styling' },
+  { setting: 'park in autumn, golden leaves', outfit: 'leather jacket over turtleneck and stylish skirt, editorial fashion look' },
+  { setting: 'library with wooden shelves, warm light', outfit: 'tailored blazer and smart trousers, intellectual chic styling' },
+  { setting: 'cobblestone street at sunset, European city', outfit: 'fitted trench coat over designer dress, fashionable editorial styling' },
+  { setting: 'art gallery, white walls, modern sculptures', outfit: 'minimalist black outfit, gallery-chic fashion' },
+  { setting: 'balcony overlooking ocean, sunset sky', outfit: 'elegant wrap dress and statement jewelry, luxury fashion styling' },
+  { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, blazer with glamorous styling' },
+  { setting: 'mountain viewpoint, misty landscape behind', outfit: 'stylish outdoor coat and boots, adventure-chic look' },
+  { setting: 'rainy city street, neon reflections, night', outfit: 'sleek dark coat and heels, noir fashion styling' },
 ];
 
   const cameras = [
@@ -140,11 +142,13 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       filename = path.basename(fullPath);
     }
 
-    const strongPrompt = `Edit this photo of a person. Keep the EXACT same person — same face, same eyes, same skin, same hair, same wings if any. Do not change their identity or appearance at all. Only change what is specified below.
+    const strongPrompt = `Edit this portrait photo. This is a professional fashion photography edit — fully clothed, tasteful, non-sexual.
+
+Keep the EXACT same person — same face, same eyes, same skin, same hair, same wings if present. Do not change their identity at all. Only change what is specified below.
 
 ${editPrompt}
 
-Output a photorealistic image with natural lighting.`;
+Style: Professional editorial photography, natural lighting, fully clothed, tasteful.`;
     const fd = new FormData();
     fd.append('model', 'gpt-image-1');
     fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), filename);
@@ -213,10 +217,13 @@ async function generateVideoWithKling(imageFilePath, prompt) {
     return null;
   }
   
+  const now = Math.floor(Date.now() / 1000);
   const token = jwt.sign(
     {
       iss: accessKey,
-      exp: Math.floor(Date.now() / 1000) + 3600
+      iat: now,
+      nbf: now - 5,
+      exp: now + 3600
     },
     secretKey,
     { algorithm: 'HS256' }
@@ -227,10 +234,6 @@ async function generateVideoWithKling(imageFilePath, prompt) {
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
   const taskPath = process.env.KLING_TASK_GET_PATH;
 
-//   if (!accessKey || !secretKey) {
-//   console.log('⚠️ Missing KLING_ACCESS_KEY or KLING_SECRET_KEY');
-//   return null;
-// }
   
   if (!createPath || !taskPath) {
     console.log('⚠️ Missing KLING_IMAGE_TO_VIDEO_PATH or KLING_TASK_GET_PATH');
