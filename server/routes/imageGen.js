@@ -227,19 +227,16 @@ async function generateVideoWithKling(imageFilePath, prompt) {
     { algorithm: 'HS256' }
   );
 
-  headers: {
-  Authorization: `Bearer ${token}`,
-  'Content-Type': 'application/json'
-}
+  
   const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
   const taskPath = process.env.KLING_TASK_GET_PATH;
 
-  if (!apiKey) {
-    console.log('⚠️ No KLING_API_KEY');
-    return null;
-  }
-
+  if (!accessKey || !secretKey) {
+  console.log('⚠️ Missing KLING_ACCESS_KEY or KLING_SECRET_KEY');
+  return null;
+}
+  
   if (!createPath || !taskPath) {
     console.log('⚠️ Missing KLING_IMAGE_TO_VIDEO_PATH or KLING_TASK_GET_PATH');
     return null;
@@ -280,7 +277,7 @@ async function generateVideoWithKling(imageFilePath, prompt) {
     const createRes = await fetch(`${apiBase}${createPath}`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(body)
@@ -323,10 +320,10 @@ async function generateVideoWithKling(imageFilePath, prompt) {
       const pollRes = await fetch(`${apiBase}${taskPath.replace('{task_id}', taskId)}`, {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${apiKey}`
+          Authorization: `Bearer ${token}`
         }
       });
-
+      
       const pollText = await pollRes.text();
       if (!pollRes.ok) {
         console.log('Kling poll status:', pollRes.status);
