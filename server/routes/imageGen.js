@@ -213,7 +213,10 @@ async function generateWithOpenAI(prompt) {
 
 async function generateVideoWithPixverse(imageFilePath, prompt) {
   const apiKey = process.env.PIXVERSE_API_KEY;
-  if (!apiKey) { console.log('⚠️ No PIXVERSE_API_KEY'); return null; }
+  if (!apiKey) {
+    console.log('⚠️ No PIXVERSE_API_KEY');
+    return null;
+  }
 
   try {
     console.log('🎬 Pixverse: uploading...');
@@ -221,34 +224,54 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
     if (!fs.existsSync(fullPath)) return null;
 
     const { v4: uuidv4 } = require('uuid');
-    const FD = require('form-data');
 
-    // Step 1: Upload image with Ai-trace-id
-    const fd = new FD();
-    fd.append('image', fs.createReadStream(fullPath), {
-      filename: path.basename(fullPath),
-      contentType: 'image/png',
-    });
+    const mimeType =
+      fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
+        ? 'image/jpeg'
+        : 'image/png';
+
+    const fileBuffer = fs.readFileSync(fullPath);
+
+    // Step 1: Upload image using native FormData + Blob
+    const uploadFd = new FormData();
+    uploadFd.append(
+      'image',
+      new Blob([fileBuffer], { type: mimeType }),
+      path.basename(fullPath)
+    );
 
     const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
       method: 'POST',
       headers: {
         'API-KEY': apiKey,
         'Ai-trace-id': uuidv4(),
-        ...fd.getHeaders(),
       },
-      body: fd,
+      body: uploadFd,
     });
 
+    const uploadText = await uploadRes.text();
+    console.log('Pixverse upload status:', uploadRes.status);
+    console.log('Pixverse upload raw:', uploadText.substring(0, 500));
+
     if (!uploadRes.ok) {
-      console.error('Pixverse upload:', uploadRes.status, (await uploadRes.text()).substring(0, 200));
       return null;
     }
 
-    const uploadData = await uploadRes.json();
-    console.log('Pixverse upload:', JSON.stringify(uploadData).substring(0, 200));
+    let uploadData;
+    try {
+      uploadData = JSON.parse(uploadText);
+    } catch {
+      console.error('Pixverse upload: invalid JSON response');
+      return null;
+    }
+
     const imgId = uploadData?.Resp?.img_id;
-    if (!imgId) { console.error('Pixverse: no img_id'); return null; }
+    if (!imgId) {
+      console.error('Pixverse: no img_id');
+      return null;
+    }
+
+    console.log(`✅ Pixverse image uploaded: ${imgId}`);
 
     // Step 2: Generate video
     const genRes = await fetch('https://app-api.pixverse.ai/openapi/v2/video/img/generate', {
@@ -264,47 +287,82 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
         model: 'v4.5',
         motion_mode: 'normal',
         quality: '540p',
-        prompt: prompt || 'gentle smile, subtle movement',
+        prompt: prompt || 'slight head movement, natural blinking, soft smile, subtle body movement, realistic motion',
         negative_prompt: 'fast motion, distortion',
       }),
     });
 
+    const genText = await genRes.text();
+    console.log('Pixverse gen status:', genRes.status);
+    console.log('Pixverse gen raw:', genText.substring(0, 500));
+
     if (!genRes.ok) {
-      console.error('Pixverse gen:', genRes.status, (await genRes.text()).substring(0, 200));
       return null;
     }
 
-    const genData = await genRes.json();
-    const videoId = genData.Resp?.video_id || genData.Resp?.id;
-    if (!videoId) { console.error('Pixverse: no video_id'); return null; }
+    let genData;
+    try {
+      genData = JSON.parse(genText);
+    } catch {
+      console.error('Pixverse generate: invalid JSON response');
+      return null;
+    }
+
+    const videoId = genData?.Resp?.video_id || genData?.Resp?.id;
+    if (!videoId) {
+      console.error('Pixverse: no video_id');
+      return null;
+    }
 
     console.log(`🎬 Pixverse video: ${videoId}`);
 
-    // Step 3: Poll using /video/result/{id} endpoint
+    // Step 3: Poll result
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 3000));
+
       try {
-        const p = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/result/${videoId}`, {
-          headers: { 'API-KEY': apiKey, 'Ai-trace-id': uuidv4() },
+        const pollRes = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/result/${videoId}`, {
+          headers: {
+            'API-KEY': apiKey,
+            'Ai-trace-id': uuidv4(),
+          },
         });
-        if (!p.ok) continue;
-        const d = await p.json();
-        if (d.Resp?.status === 1 && d.Resp?.url) {
-          console.log('✅ Pixverse video done');
-          const dl = await fetch(d.Resp.url);
-          return dl.ok ? Buffer.from(await dl.arrayBuffer()) : d.Resp.url;
+
+        const pollText = await pollRes.text();
+        if (!pollRes.ok) continue;
+
+        let pollData;
+        try {
+          pollData = JSON.parse(pollText);
+        } catch {
+          continue;
         }
-        if ([7, 8].includes(d.Resp?.status)) {
-          console.error('Pixverse failed:', d.Resp?.status);
+
+        if (pollData?.Resp?.status === 1 && pollData?.Resp?.url) {
+          console.log('✅ Pixverse video done');
+          const dl = await fetch(pollData.Resp.url);
+          return dl.ok ? Buffer.from(await dl.arrayBuffer()) : pollData.Resp.url;
+        }
+
+        if ([7, 8].includes(pollData?.Resp?.status)) {
+          console.error('Pixverse failed:', pollData?.Resp?.status);
           return null;
         }
-        if (i % 5 === 0) console.log(`🎬 Pixverse status: ${d.Resp?.status} (${i}/40)`);
-      } catch {}
-    }
-    return null;
-  } catch (err) { console.error('Pixverse:', err.message); return null; }
-}
 
+        if (i % 5 === 0) {
+          console.log(`🎬 Pixverse status: ${pollData?.Resp?.status} (${i}/40)`);
+        }
+      } catch (e) {
+        console.error('Pixverse poll error:', e.message);
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error('Pixverse:', err.message);
+    return null;
+  }
+}
 // ===== ROUTES =====
 
 // --- Avatar creation (FREE via Pollinations) ---
@@ -454,8 +512,10 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     // Step 2: Animate with Pixverse
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const videoBuffer = await generateVideoWithPixverse(sceneFile, `${gender} gently smiling, subtle movement, cinematic`);
-
+    const videoBuffer = await generateVideoWithPixverse(
+      path.join(uploadDir, sceneFile),
+      `${gender} gently smiling, subtle movement, cinematic`
+    );
     if (videoBuffer) {
       let videoUrl;
       if (Buffer.isBuffer(videoBuffer)) {
