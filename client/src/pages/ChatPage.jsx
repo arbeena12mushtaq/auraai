@@ -11,6 +11,8 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
   const [initLoad, setInitLoad] = useState(true);
   const [mediaLoading, setMediaLoading] = useState(null); // 'image' | 'video' | null
   const [mediaProgress, setMediaProgress] = useState(0);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
   const chatRef = useRef();
 
   useEffect(() => {
@@ -52,6 +54,80 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
       else setMessages(p => [...p, { role: 'assistant', type: 'text', content: err.error || "hey 💕", created_at: new Date().toISOString() }]);
     }
     setLoading(false);
+  };
+
+  // ===== Voice Recording =====
+  const toggleRecording = async () => {
+    if (recording) {
+      // Stop recording
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+
+        // Send to STT
+        setLoading(true);
+        try {
+          const formData = new FormData();
+          formData.append('audio', blob, 'voice.webm');
+          const sttRes = await fetch('/api/voice/stt', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+            body: formData,
+          });
+          const sttData = await sttRes.json();
+          if (sttData.text) {
+            // Send transcribed text as message
+            setInput(sttData.text);
+            // Auto-send
+            const tempInput = sttData.text;
+            setMessages(prev => [...prev, { role: 'user', content: tempInput, type: 'text' }]);
+            const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { message: tempInput } });
+            if (data.reply) {
+              setMessages(prev => [...prev, { role: 'assistant', content: data.reply, type: 'text' }]);
+
+              // Auto TTS for voice response
+              try {
+                const ttsRes = await fetch('/api/voice/tts', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ text: data.reply, voice: companion.voice }),
+                });
+                if (ttsRes.ok) {
+                  const audioBlob = await ttsRes.blob();
+                  const audioUrl = URL.createObjectURL(audioBlob);
+                  setMessages(prev => [...prev, { role: 'assistant', content: '🔊', type: 'audio', media_url: audioUrl }]);
+                }
+              } catch {}
+            }
+            setInput('');
+          }
+        } catch (err) {
+          console.error('Voice error:', err);
+        }
+        setLoading(false);
+      };
+
+      mediaRecorder.start();
+      setRecording(true);
+    } catch (err) {
+      console.error('Mic error:', err);
+      alert('Microphone access denied. Please allow microphone access.');
+    }
   };
 
   // ===== Generate Image =====
@@ -290,6 +366,14 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
             placeholder="Write a message..."
             disabled={loading || !!mediaLoading}
           />
+          <button className={`candy-mic-btn ${recording ? 'recording' : ''}`} onClick={toggleRecording}
+            disabled={loading || !!mediaLoading}>
+            {recording ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            )}
+          </button>
           <button className="candy-send-btn" onClick={sendText}
             disabled={loading || !!mediaLoading || !input.trim()}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -459,6 +543,16 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         }
         .candy-send-btn:hover:not(:disabled) { background: #6d28d9; }
         .candy-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .candy-mic-btn {
+          width: 40px; height: 40px; border-radius: 50%; border: none;
+          background: rgba(255,255,255,0.08); color: #ccc; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: all 0.2s;
+        }
+        .candy-mic-btn:hover:not(:disabled) { background: rgba(255,255,255,0.15); color: #fff; }
+        .candy-mic-btn.recording { background: #ef4444; color: #fff; animation: pulse 1s infinite; }
+        .candy-mic-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
 
         .candy-action-row {
           display: flex; align-items: center; gap: 8px;

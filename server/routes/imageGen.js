@@ -105,8 +105,10 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     // Read avatar image as base64 data URL
     const imageBuffer = fs.readFileSync(fullPath);
     const base64Image = imageBuffer.toString('base64');
-    const dataUrl = `data:image/png;base64,${base64Image}`;
+    const mimeType = fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
+    const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
+    // JSON format with 'images' array (not 'image')
     const res = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       headers: {
@@ -115,7 +117,7 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       },
       body: JSON.stringify({
         model: 'gpt-image-1',
-        image: [{ type: 'input_image', input_image: { image_url: dataUrl } }],
+        images: [{ type: 'input_image', image_url: dataUrl }],
         prompt: editPrompt,
         quality: 'low',
         size: '1024x1024',
@@ -124,14 +126,17 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('GPT Image error:', res.status, errText.substring(0, 300));
-      
-      // Fallback: try multipart form upload instead
+      console.error('GPT Image JSON error:', res.status, errText.substring(0, 300));
+
+      // Fallback: multipart form-data
       console.log('🎨 Trying multipart form upload...');
       const FormData = require('form-data');
       const fd = new FormData();
       fd.append('model', 'gpt-image-1');
-      fd.append('image[]', fs.createReadStream(fullPath));
+      fd.append('image[]', fs.createReadStream(fullPath), {
+        filename: path.basename(fullPath),
+        contentType: mimeType,
+      });
       fd.append('prompt', editPrompt);
       fd.append('quality', 'low');
       fd.append('size', '1024x1024');
@@ -150,13 +155,8 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       const data2 = await res2.json();
       const b64_2 = data2.data?.[0]?.b64_json;
       if (b64_2) {
-        console.log('✅ GPT Image edit done (multipart)');
+        console.log('✅ GPT Image edit done');
         return Buffer.from(b64_2, 'base64');
-      }
-      const url2 = data2.data?.[0]?.url;
-      if (url2) {
-        const dlRes = await fetch(url2);
-        if (dlRes.ok) { console.log('✅ GPT Image edit done'); return Buffer.from(await dlRes.arrayBuffer()); }
       }
       return null;
     }
@@ -166,12 +166,6 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     if (b64) {
       console.log('✅ GPT Image edit done');
       return Buffer.from(b64, 'base64');
-    }
-    
-    const url = data.data?.[0]?.url;
-    if (url) {
-      const dlRes = await fetch(url);
-      if (dlRes.ok) { console.log('✅ GPT Image edit done'); return Buffer.from(await dlRes.arrayBuffer()); }
     }
 
     console.error('GPT Image: no image in response');
@@ -215,13 +209,23 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
     const fullPath = path.join(uploadDir, path.basename(imageFilePath));
     if (!fs.existsSync(fullPath)) return null;
 
+    const { v4: uuidv4 } = require('uuid');
     const FD = require('form-data');
+
+    // Step 1: Upload image with Ai-trace-id
     const fd = new FD();
-    fd.append('image', fs.createReadStream(fullPath), { filename: 'scene.png', contentType: 'image/png' });
+    fd.append('image', fs.createReadStream(fullPath), {
+      filename: path.basename(fullPath),
+      contentType: 'image/png',
+    });
 
     const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
       method: 'POST',
-      headers: { 'API-KEY': apiKey, ...fd.getHeaders() },
+      headers: {
+        'API-KEY': apiKey,
+        'Ai-trace-id': uuidv4(),
+        ...fd.getHeaders(),
+      },
       body: fd,
     });
 
@@ -231,33 +235,47 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
     }
 
     const uploadData = await uploadRes.json();
-    const imgId = uploadData?.Resp?.img_id || uploadData?.Resp?.id;
-    if (!imgId) { console.error('Pixverse: no img_id', JSON.stringify(uploadData).substring(0, 200)); return null; }
+    console.log('Pixverse upload:', JSON.stringify(uploadData).substring(0, 200));
+    const imgId = uploadData?.Resp?.img_id;
+    if (!imgId) { console.error('Pixverse: no img_id'); return null; }
 
-    console.log(`🎬 Pixverse img_id: ${imgId}`);
-
+    // Step 2: Generate video
     const genRes = await fetch('https://app-api.pixverse.ai/openapi/v2/video/img/generate', {
       method: 'POST',
-      headers: { 'API-KEY': apiKey, 'Content-Type': 'application/json' },
+      headers: {
+        'API-KEY': apiKey,
+        'Ai-trace-id': uuidv4(),
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        duration: 5, img_id: imgId, model: 'v5.6',
-        motion_mode: 'normal', quality: '540p',
+        duration: 5,
+        img_id: imgId,
+        model: 'v4.5',
+        motion_mode: 'normal',
+        quality: '540p',
         prompt: prompt || 'gentle smile, subtle movement',
         negative_prompt: 'fast motion, distortion',
       }),
     });
-    if (!genRes.ok) { console.error('Pixverse gen:', genRes.status, (await genRes.text()).substring(0, 200)); return null; }
+
+    if (!genRes.ok) {
+      console.error('Pixverse gen:', genRes.status, (await genRes.text()).substring(0, 200));
+      return null;
+    }
 
     const genData = await genRes.json();
-    const videoId = genData.Resp?.id;
-    if (!videoId) return null;
+    const videoId = genData.Resp?.video_id || genData.Resp?.id;
+    if (!videoId) { console.error('Pixverse: no video_id'); return null; }
 
     console.log(`🎬 Pixverse video: ${videoId}`);
 
+    // Step 3: Poll using /video/result/{id} endpoint
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 3000));
       try {
-        const p = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/${videoId}`, { headers: { 'API-KEY': apiKey } });
+        const p = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/result/${videoId}`, {
+          headers: { 'API-KEY': apiKey, 'Ai-trace-id': uuidv4() },
+        });
         if (!p.ok) continue;
         const d = await p.json();
         if (d.Resp?.status === 1 && d.Resp?.url) {
@@ -265,7 +283,11 @@ async function generateVideoWithPixverse(imageFilePath, prompt) {
           const dl = await fetch(d.Resp.url);
           return dl.ok ? Buffer.from(await dl.arrayBuffer()) : d.Resp.url;
         }
-        if ([4, 6, 7, 8].includes(d.Resp?.status)) return null;
+        if ([7, 8].includes(d.Resp?.status)) {
+          console.error('Pixverse failed:', d.Resp?.status);
+          return null;
+        }
+        if (i % 5 === 0) console.log(`🎬 Pixverse status: ${d.Resp?.status} (${i}/40)`);
       } catch {}
     }
     return null;
