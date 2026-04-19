@@ -128,16 +128,19 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     const strongPrompt = `
 Use the provided image as the identity reference.
 
-Keep the SAME person exactly:
+Preserve exactly:
 - same face
-- same identity
+- same eye shape
+- same nose
+- same lips
+- same jawline
 - same skin tone
-- same facial features
 - same hairstyle
 
-DO NOT change the face.
+Do not beautify, redesign, or replace the person.
+Do not change facial structure.
 
-Modify ONLY what is requested below:
+Modify only:
 ${editPrompt}
 
 Style requirements:
@@ -149,7 +152,6 @@ Style requirements:
 - realistic proportions
 - tasteful and non-explicit
 `;
-
     const fd = new FormData();
     fd.append('model', 'gpt-image-1');
     fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), path.basename(fullPath));
@@ -361,8 +363,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Luxury editorial styling, elegant and bold, photorealistic, natural lighting, high resolution, tasteful and non-explicit.`;
-
+    const editPrompt = `Change only the background to: ${setting}. Change only the outfit to: ${outfit}. Use camera angle: ${camera}. Preserve the exact same woman from the source image with no facial changes.`;
     console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
