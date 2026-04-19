@@ -34,6 +34,7 @@ function sanitizePrompt(text) {
     .replace(/\bsensual\b/gi, 'refined')
     .replace(/\balluring\b/gi, 'stylish')
     .replace(/\bfantasy\b/gi, '')
+    .replace(/\bsuccubus\b/gi, 'winged gothic woman')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -360,7 +361,9 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Luxury editorial styling, elegant and bold, photorealistic, natural lighting, high resolution, tasteful and non-explicit.`;    console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
+    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Luxury editorial styling, elegant and bold, photorealistic, natural lighting, high resolution, tasteful and non-explicit.`;
+
+    console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
     let imageBuffer = null;
