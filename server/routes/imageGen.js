@@ -126,32 +126,33 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     const fileBuffer = fs.readFileSync(fullPath);
 
     const strongPrompt = `
-Use the provided image as the identity reference.
-
-Preserve exactly:
-- same face
-- same eye shape
-- same nose
-- same lips
-- same jawline
-- same skin tone
-- same hairstyle
-
-Do not beautify, redesign, or replace the person.
-Do not change facial structure.
-
-Modify only:
-${editPrompt}
-
-Style requirements:
-- photorealistic
-- luxury editorial aesthetic
-- high-fashion styling
-- natural lighting
-- high detail skin texture
-- realistic proportions
-- tasteful and non-explicit
-`;
+      You are editing an existing photo.
+      
+      The person in the image must remain EXACTLY the same.
+      
+      STRICT RULES:
+      - Keep the same face (do not change identity)
+      - Keep same eyes, nose, lips, jawline
+      - Keep same skin tone
+      - Keep same hairstyle
+      - Keep same wings (do not remove or redesign them)
+      
+      Only modify what is requested below.
+      
+      Do NOT:
+      - redesign the face
+      - beautify or change facial structure
+      - change identity
+      
+      EDIT INSTRUCTIONS:
+      ${editPrompt}
+      
+      STYLE:
+      - photorealistic
+      - natural lighting
+      - realistic proportions
+      - high detail skin
+      `;
     const fd = new FormData();
     fd.append('model', 'gpt-image-1');
     fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), path.basename(fullPath));
@@ -414,7 +415,18 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change only the background to: ${setting}. Change only the outfit to: ${outfit}. Use camera angle: ${camera}. Keep the exact same woman, same face, same hairstyle, same wings. Do not change facial features.`;
+    const editPrompt = `
+      Change ONLY the background to: ${setting}.
+      Change ONLY the outfit to: ${outfit}.
+      
+      Use this camera angle: ${camera}.
+      
+      IMPORTANT:
+      - Keep the exact same woman
+      - Keep the exact same face
+      - Keep the same wings visible
+      - Do NOT change facial features
+      `;
     console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
