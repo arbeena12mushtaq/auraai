@@ -213,7 +213,24 @@ async function generateWithOpenAI(prompt) {
 }
 
 async function generateVideoWithKling(imageFilePath, prompt) {
-  const apiKey = process.env.KLING_API_KEY;
+  const jwt = require('jsonwebtoken');
+  
+  const accessKey = process.env.KLING_ACCESS_KEY;
+  const secretKey = process.env.KLING_SECRET_KEY;
+  
+  const token = jwt.sign(
+    {
+      iss: accessKey,
+      exp: Math.floor(Date.now() / 1000) + 3600
+    },
+    secretKey,
+    { algorithm: 'HS256' }
+  );
+
+  headers: {
+  Authorization: `Bearer ${token}`,
+  'Content-Type': 'application/json'
+}
   const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
   const taskPath = process.env.KLING_TASK_GET_PATH;
