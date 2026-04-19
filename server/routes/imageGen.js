@@ -96,68 +96,37 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
   if (!apiKey) { console.log('⚠️ No OPENAI_API_KEY'); return null; }
 
   try {
-    console.log('🎨 GPT Image edit (same face, new scene)...');
+    console.log('🎨 GPT Image edit...');
     console.log('🎨 Edit:', editPrompt.substring(0, 100) + '...');
 
     const fullPath = path.join(uploadDir, path.basename(avatarImagePath));
-    if (!fs.existsSync(fullPath)) { console.error('Avatar file not found:', fullPath); return null; }
+    if (!fs.existsSync(fullPath)) { console.error('Avatar not found:', fullPath); return null; }
 
-    // Read avatar image as base64 data URL
-    const imageBuffer = fs.readFileSync(fullPath);
-    const base64Image = imageBuffer.toString('base64');
-    const mimeType = fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
-    const dataUrl = `data:${mimeType};base64,${base64Image}`;
+    // gpt-image-1 edits MUST use multipart/form-data (not JSON)
+    // Format: -F "model=gpt-image-1" -F "image[]=@file.png" -F "prompt=..." 
+    const FormData = require('form-data');
+    const fd = new FormData();
+    fd.append('model', 'gpt-image-1');
+    fd.append('image[]', fs.createReadStream(fullPath), {
+      filename: path.basename(fullPath),
+      contentType: fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg') ? 'image/jpeg' : 'image/png',
+    });
+    fd.append('prompt', editPrompt);
+    fd.append('quality', 'low');
+    fd.append('size', '1024x1024');
 
-    // JSON format with 'images' array (not 'image')
     const res = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        ...fd.getHeaders(),
       },
-      body: JSON.stringify({
-        model: 'gpt-image-1',
-        images: [{ type: 'input_image', image_url: dataUrl }],
-        prompt: editPrompt,
-        quality: 'low',
-        size: '1024x1024',
-      }),
+      body: fd,
     });
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('GPT Image JSON error:', res.status, errText.substring(0, 300));
-
-      // Fallback: multipart form-data
-      console.log('🎨 Trying multipart form upload...');
-      const FormData = require('form-data');
-      const fd = new FormData();
-      fd.append('model', 'gpt-image-1');
-      fd.append('image[]', fs.createReadStream(fullPath), {
-        filename: path.basename(fullPath),
-        contentType: mimeType,
-      });
-      fd.append('prompt', editPrompt);
-      fd.append('quality', 'low');
-      fd.append('size', '1024x1024');
-
-      const res2 = await fetch('https://api.openai.com/v1/images/edits', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, ...fd.getHeaders() },
-        body: fd,
-      });
-
-      if (!res2.ok) {
-        console.error('GPT Image multipart error:', res2.status, (await res2.text()).substring(0, 300));
-        return null;
-      }
-
-      const data2 = await res2.json();
-      const b64_2 = data2.data?.[0]?.b64_json;
-      if (b64_2) {
-        console.log('✅ GPT Image edit done');
-        return Buffer.from(b64_2, 'base64');
-      }
+      console.error('GPT Image error:', res.status, errText.substring(0, 300));
       return null;
     }
 
@@ -168,7 +137,7 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       return Buffer.from(b64, 'base64');
     }
 
-    console.error('GPT Image: no image in response');
+    console.error('GPT Image: no b64 in response');
     return null;
   } catch (err) {
     console.error('GPT Image error:', err.message);
