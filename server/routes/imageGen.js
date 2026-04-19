@@ -48,7 +48,6 @@ function getRandomScene() {
   { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear, elegant fashion look' },
   { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable editorial styling' },
   { setting: 'swimming pool area, sunny day', outfit: 'luxury poolside resort fashion, glamorous styling' },
-  { setting: 'kitchen cooking, natural window light', outfit: 'cute fitted apron over stylish dress, playful fashion look' },
   { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder fitted top and sleek skirt, luxury fashion styling' },
   { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
 ];
@@ -103,61 +102,60 @@ async function generateWithPollinations(prompt, width = 1024, height = 1024) {
 
 async function editWithGPTImage(avatarImagePath, editPrompt) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) { console.log('⚠️ No OPENAI_API_KEY'); return null; }
+  if (!apiKey) {
+    console.log('⚠️ No OPENAI_API_KEY');
+    return null;
+  }
 
   try {
     console.log('🎨 GPT Image edit...');
     console.log('🎨 Edit:', editPrompt.substring(0, 100) + '...');
 
     const fullPath = path.join(uploadDir, path.basename(avatarImagePath));
-    if (!fs.existsSync(fullPath)) { console.error('Avatar not found:', fullPath); return null; }
+    if (!fs.existsSync(fullPath)) {
+      console.error('Avatar not found:', fullPath);
+      return null;
+    }
 
-    // gpt-image-1 edits MUST use multipart/form-data (not JSON)
-    // Format: -F "model=gpt-image-1" -F "image[]=@file.png" -F "prompt=..." 
-    //const FormData = require('form-data');
-    //const fd = new FormData();
-    
     const mimeType =
       fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
         ? 'image/jpeg'
         : 'image/png';
-    
+
     const fileBuffer = fs.readFileSync(fullPath);
-    
-    const fd = new FormData();
+
     const strongPrompt = `
-      Use the provided image as the identity reference.
-      
-      Keep the SAME person exactly:
-      - same face
-      - same identity
-      - same skin tone
-      - same facial features
-      - same hairstyle
-      
-      DO NOT change the face.
-      
-      Modify ONLY what is requested below:
-      ${editPrompt}
-      
-      Style requirements:
-      - photorealistic
-      - luxury editorial aesthetic
-      - high-fashion styling
-      - natural lighting
-      - high detail skin texture
-      - realistic proportions
-      - tasteful and non-explicit
-      `;
+Use the provided image as the identity reference.
+
+Keep the SAME person exactly:
+- same face
+- same identity
+- same skin tone
+- same facial features
+- same hairstyle
+
+DO NOT change the face.
+
+Modify ONLY what is requested below:
+${editPrompt}
+
+Style requirements:
+- photorealistic
+- luxury editorial aesthetic
+- high-fashion styling
+- natural lighting
+- high detail skin texture
+- realistic proportions
+- tasteful and non-explicit
+`;
+
+    const fd = new FormData();
     fd.append('model', 'gpt-image-1');
-    fd.append('image[]', fileBuffer, {
-      filename: path.basename(fullPath),
-      contentType: mimeType,
-    });
+    fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), path.basename(fullPath));
     fd.append('prompt', strongPrompt);
     fd.append('quality', 'high');
     fd.append('size', '1024x1024');
-    
+
     const res = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       headers: {
@@ -165,7 +163,7 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       },
       body: fd,
     });
-        
+
     if (!res.ok) {
       const errText = await res.text();
       console.error('GPT Image error:', res.status, errText.substring(0, 300));
@@ -186,7 +184,6 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     return null;
   }
 }
-
 // ===== DALL-E fallback =====
 
 async function generateWithOpenAI(prompt) {
