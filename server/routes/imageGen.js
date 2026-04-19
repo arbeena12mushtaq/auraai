@@ -27,25 +27,31 @@ async function deductTokens(userId, amount, action, description) {
 
 function sanitizePrompt(text) {
   return (text || '')
-    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx)\b/gi, '')
-    .replace(/\s+/g, ' ').trim();
+    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx|sexual|erotic)\b/gi, '')
+    .replace(/\bsexy\b/gi, 'glamorous')
+    .replace(/\bhot\b/gi, 'stunning')
+    .replace(/\bseductive\b/gi, 'elegant')
+    .replace(/\bsensual\b/gi, 'refined')
+    .replace(/\balluring\b/gi, 'stylish')
+    .replace(/\bfantasy\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
-
 function getRandomScene() {
   const scenes = [
-    { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'tight elegant mini dress, stylish and alluring' },
-    { setting: 'beach during golden hour, ocean behind', outfit: 'glamorous beachwear, flowing sheer wrap, seductive fashion style' },
-    { setting: 'modern apartment, soft daylight, on sofa', outfit: 'silky fitted loungewear, chic and attractive' },
-    { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black cocktail dress, bold and glamorous' },
-    { setting: 'garden with flowers, soft sunlight', outfit: 'fantasy-inspired fitted dress, romantic and alluring' },
-    { setting: 'park in autumn, golden leaves', outfit: 'form-fitting leather jacket, short skirt, confident fashion look' },
-    { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear' },
-    { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable and captivating' },
-    { setting: 'swimming pool area, sunny day', outfit: 'luxury resort wear, glamorous and confident' },
-    { setting: 'kitchen cooking, natural window light', outfit: 'cute fitted apron over stylish short dress' },
-    { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder fitted top and sleek skirt, sensual fashion style' },
-    { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
-  ];
+  { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'elegant mini dress, high-fashion styling' },
+  { setting: 'beach during golden hour, ocean behind', outfit: 'luxury resort wear, flowing wrap, editorial style' },
+  { setting: 'modern apartment, soft daylight, on sofa', outfit: 'silky fitted loungewear, chic editorial fashion' },
+  { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black cocktail dress, bold glamorous styling' },
+  { setting: 'garden with flowers, soft sunlight', outfit: 'fitted couture dress, romantic elegant styling' },
+  { setting: 'park in autumn, golden leaves', outfit: 'form-fitting leather jacket and stylish skirt, editorial fashion look' },
+  { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear, elegant fashion look' },
+  { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable editorial styling' },
+  { setting: 'swimming pool area, sunny day', outfit: 'luxury poolside resort fashion, glamorous styling' },
+  { setting: 'kitchen cooking, natural window light', outfit: 'cute fitted apron over stylish dress, playful fashion look' },
+  { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder fitted top and sleek skirt, luxury fashion styling' },
+  { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
+];
 
   const cameras = [
     'selfie angle, phone held at arm length, slightly above eye level, front facing',
@@ -112,7 +118,7 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     const fd = new FormData();
     
     fd.append('model', 'gpt-image-1');
-    fd.append('image', fs.createReadStream(fullPath), {
+    fd.append('image[]', fs.createReadStream(fullPath), {
       filename: path.basename(fullPath),
       contentType: fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
         ? 'image/jpeg'
@@ -120,22 +126,29 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     });
     
     const strongPrompt = `
-    Use the provided image as the identity reference.
-    
-    Keep the SAME person exactly:
-    - same face
-    - same identity
-    - same skin tone
-    - same facial features
-    - same hairstyle
-    
-    DO NOT change the face.
-    
-    Modify ONLY what is requested below:
-    ${editPrompt}
-    
-    Keep the result photorealistic, natural lighting, high detail skin texture, realistic proportions.
-    `;
+      Use the provided image as the identity reference.
+      
+      Keep the SAME person exactly:
+      - same face
+      - same identity
+      - same skin tone
+      - same facial features
+      - same hairstyle
+      
+      DO NOT change the face.
+      
+      Modify ONLY what is requested below:
+      ${editPrompt}
+      
+      Style requirements:
+      - photorealistic
+      - luxury editorial aesthetic
+      - high-fashion styling
+      - natural lighting
+      - high detail skin texture
+      - realistic proportions
+      - tasteful and non-explicit
+      `;
     
     fd.append('prompt', strongPrompt);
     fd.append('quality', 'high');
@@ -348,9 +361,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Glamorous fantasy aesthetic, attractive styling, photorealistic, natural lighting, high resolution.`;
-    console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
-
+    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Luxury editorial styling, elegant and bold, photorealistic, natural lighting, high resolution, tasteful and non-explicit.`;    console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
     let imageBuffer = null;
