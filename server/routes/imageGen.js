@@ -209,160 +209,153 @@ async function generateWithOpenAI(prompt) {
   } catch (err) { console.error('DALL-E:', err.message); return null; }
 }
 
-// ===== Pixverse Video =====
+async function generateVideoWithKling(imageFilePath, prompt) {
+  const apiKey = process.env.KLING_API_KEY;
+  const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
+  const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
+  const taskPath = process.env.KLING_TASK_GET_PATH;
 
-async function generateVideoWithPixverse(imageFilePath, prompt) {
-  const apiKey = process.env.PIXVERSE_API_KEY;
   if (!apiKey) {
-    console.log('⚠️ No PIXVERSE_API_KEY');
+    console.log('⚠️ No KLING_API_KEY');
+    return null;
+  }
+
+  if (!createPath || !taskPath) {
+    console.log('⚠️ Missing KLING_IMAGE_TO_VIDEO_PATH or KLING_TASK_GET_PATH');
     return null;
   }
 
   try {
-    console.log('🎬 Pixverse: uploading...');
-    const fullPath = path.join(uploadDir, path.basename(imageFilePath));
-    if (!fs.existsSync(fullPath)) return null;
+    console.log('🎬 Kling: preparing image-to-video request...');
 
-    const { v4: uuidv4 } = require('uuid');
+    const fullPath = path.isAbsolute(imageFilePath)
+      ? imageFilePath
+      : path.join(uploadDir, path.basename(imageFilePath));
 
+    if (!fs.existsSync(fullPath)) {
+      console.error('Kling source image not found:', fullPath);
+      return null;
+    }
+
+    const fileBuffer = fs.readFileSync(fullPath);
     const mimeType =
       fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
         ? 'image/jpeg'
         : 'image/png';
 
-    const fileBuffer = fs.readFileSync(fullPath);
+    // Kling docs confirm image-to-video support, but the exact field name/path
+    // must match your official dashboard docs. Most providers accept a data URI.
+    const base64 = fileBuffer.toString('base64');
+    
+    const body = {
+      model_name: "kling-v2-6",
+      image: base64, // ✅ IMPORTANT: NO "data:image/png;base64,"
+      prompt: prompt || "slight head movement, natural blinking, soft smile",
+      duration: "5",
+      mode: "std",
+      sound: "off"
+    };
 
-    // Step 1: Upload image using native FormData + Blob
-    const uploadFd = new FormData();
-    uploadFd.append(
-      'image',
-      new Blob([fileBuffer], { type: mimeType }),
-      path.basename(fullPath)
-    );
-
-    const uploadRes = await fetch('https://app-api.pixverse.ai/openapi/v2/image/upload', {
+    
+    const createRes = await fetch(`${apiBase}${createPath}`, {
       method: 'POST',
       headers: {
-        'API-KEY': apiKey,
-        'Ai-trace-id': uuidv4(),
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
       },
-      body: uploadFd,
+      body: JSON.stringify(body)
     });
 
-    const uploadText = await uploadRes.text();
-    console.log('Pixverse upload status:', uploadRes.status);
-    console.log('Pixverse upload raw:', uploadText.substring(0, 500));
+    const createText = await createRes.text();
+    console.log('Kling create status:', createRes.status);
+    console.log('Kling create raw:', createText.substring(0, 500));
 
-    if (!uploadRes.ok) {
+    if (!createRes.ok) {
       return null;
     }
 
-    let uploadData;
+    let createData;
     try {
-      uploadData = JSON.parse(uploadText);
+      createData = JSON.parse(createText);
     } catch {
-      console.error('Pixverse upload: invalid JSON response');
+      console.error('Kling create: invalid JSON');
       return null;
     }
 
-    const imgId = uploadData?.Resp?.img_id;
-    if (!imgId) {
-      console.error('Pixverse: no img_id');
+    // Common task id shapes; adjust if your official docs use another key
+    const taskId =
+      createData?.data?.task_id ||
+      createData?.task_id ||
+      createData?.data?.id ||
+      createData?.id;
+
+    if (!taskId) {
+      console.error('Kling: no task_id in response');
       return null;
     }
 
-    console.log(`✅ Pixverse image uploaded: ${imgId}`);
+    console.log(`🎬 Kling task created: ${taskId}`);
 
-    // Step 2: Generate video
-    const genRes = await fetch('https://app-api.pixverse.ai/openapi/v2/video/img/generate', {
-      method: 'POST',
-      headers: {
-        'API-KEY': apiKey,
-        'Ai-trace-id': uuidv4(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        duration: 5,
-        img_id: imgId,
-        model: 'v4.5',
-        motion_mode: 'normal',
-        quality: '540p',
-        prompt: prompt || 'slight head movement, natural blinking, soft smile, subtle body movement, realistic motion',
-        negative_prompt: 'fast motion, distortion',
-      }),
-    });
-
-    const genText = await genRes.text();
-    console.log('Pixverse gen status:', genRes.status);
-    console.log('Pixverse gen raw:', genText.substring(0, 500));
-
-    if (!genRes.ok) {
-      return null;
-    }
-
-    let genData;
-    try {
-      genData = JSON.parse(genText);
-    } catch {
-      console.error('Pixverse generate: invalid JSON response');
-      return null;
-    }
-
-    const videoId = genData?.Resp?.video_id || genData?.Resp?.id;
-    if (!videoId) {
-      console.error('Pixverse: no video_id');
-      return null;
-    }
-
-    console.log(`🎬 Pixverse video: ${videoId}`);
-
-    // Step 3: Poll result
+    // Poll result
     for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
 
-      try {
-        const pollRes = await fetch(`https://app-api.pixverse.ai/openapi/v2/video/result/${videoId}`, {
-          headers: {
-            'API-KEY': apiKey,
-            'Ai-trace-id': uuidv4(),
-          },
-        });
-
-        const pollText = await pollRes.text();
-        if (!pollRes.ok) continue;
-
-        let pollData;
-        try {
-          pollData = JSON.parse(pollText);
-        } catch {
-          continue;
+      const pollRes = await fetch(`${apiBase}${taskPath.replace('{task_id}', taskId)}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`
         }
+      });
 
-        if (pollData?.Resp?.status === 1 && pollData?.Resp?.url) {
-          console.log('✅ Pixverse video done');
-          const dl = await fetch(pollData.Resp.url);
-          return dl.ok ? Buffer.from(await dl.arrayBuffer()) : pollData.Resp.url;
-        }
-
-        if ([7, 8].includes(pollData?.Resp?.status)) {
-          console.error('Pixverse failed:', pollData?.Resp?.status);
-          return null;
-        }
-
-        if (i % 5 === 0) {
-          console.log(`🎬 Pixverse status: ${pollData?.Resp?.status} (${i}/40)`);
-        }
-      } catch (e) {
-        console.error('Pixverse poll error:', e.message);
+      const pollText = await pollRes.text();
+      if (!pollRes.ok) {
+        console.log('Kling poll status:', pollRes.status);
+        continue;
       }
+
+      let pollData;
+      try {
+        pollData = JSON.parse(pollText);
+      } catch {
+        continue;
+      }
+
+      if (i % 4 === 0) {
+        console.log('Kling poll raw:', pollText.substring(0, 300));
+      }
+
+      const status =
+        pollData?.data?.status ||
+        pollData?.status ||
+        pollData?.task_status;
+
+      const videoUrl =
+        pollData?.data?.video_url ||
+        pollData?.data?.url ||
+        pollData?.video_url ||
+        pollData?.url;
+
+      if (videoUrl) {
+        console.log('✅ Kling video done');
+        const dl = await fetch(videoUrl);
+        return dl.ok ? Buffer.from(await dl.arrayBuffer()) : videoUrl;
+      }
+
+      if (['failed', 'FAIL', 'error', 'ERROR'].includes(String(status))) {
+        console.error('Kling failed:', status);
+        return null;
+      }
+
+      console.log(`🎬 Kling status: ${status || 'processing'} (${i}/40)`);
     }
 
     return null;
   } catch (err) {
-    console.error('Pixverse:', err.message);
+    console.error('Kling:', err.message);
     return null;
   }
 }
+
 // ===== ROUTES =====
 
 // --- Avatar creation (FREE via Pollinations) ---
@@ -512,9 +505,9 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
 
     // Step 2: Animate with Pixverse
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const videoBuffer = await generateVideoWithPixverse(
+    const videoBuffer = await generateVideoWithKling(
       path.join(uploadDir, sceneFile),
-      `${gender} gently smiling, subtle movement, cinematic`
+      `${gender} slight head movement, natural blinking, soft smile, subtle body movement, realistic motion`
     );
     if (videoBuffer) {
       let videoUrl;
