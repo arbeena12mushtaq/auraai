@@ -114,17 +114,17 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
 
     // gpt-image-1 edits MUST use multipart/form-data (not JSON)
     // Format: -F "model=gpt-image-1" -F "image[]=@file.png" -F "prompt=..." 
-    const FormData = require('form-data');
-    const fd = new FormData();
+    //const FormData = require('form-data');
+    //const fd = new FormData();
     
-    fd.append('model', 'gpt-image-1');
-    fd.append('image[]', fs.createReadStream(fullPath), {
-      filename: path.basename(fullPath),
-      contentType: fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
+    const mimeType =
+      fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
         ? 'image/jpeg'
-        : 'image/png',
-    });
+        : 'image/png';
     
+    const fileBuffer = fs.readFileSync(fullPath);
+    
+    const fd = new FormData();
     const strongPrompt = `
       Use the provided image as the identity reference.
       
@@ -149,21 +149,23 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       - realistic proportions
       - tasteful and non-explicit
       `;
-    
+    fd.append('model', 'gpt-image-1');
+    fd.append('image[]', fileBuffer, {
+      filename: path.basename(fullPath),
+      contentType: mimeType,
+    });
     fd.append('prompt', strongPrompt);
     fd.append('quality', 'high');
     fd.append('size', '1024x1024');
     
-        
     const res = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        ...fd.getHeaders(),
+        Authorization: `Bearer ${apiKey}`,
       },
       body: fd,
     });
-
+        
     if (!res.ok) {
       const errText = await res.text();
       console.error('GPT Image error:', res.status, errText.substring(0, 300));
