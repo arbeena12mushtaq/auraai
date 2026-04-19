@@ -218,6 +218,11 @@ async function generateVideoWithKling(imageFilePath, prompt) {
   const accessKey = process.env.KLING_ACCESS_KEY;
   const secretKey = process.env.KLING_SECRET_KEY;
   
+  if (!accessKey || !secretKey) {
+    console.log('⚠️ Missing KLING_ACCESS_KEY or KLING_SECRET_KEY');
+    return null;
+  }
+  
   const token = jwt.sign(
     {
       iss: accessKey,
@@ -232,10 +237,10 @@ async function generateVideoWithKling(imageFilePath, prompt) {
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
   const taskPath = process.env.KLING_TASK_GET_PATH;
 
-  if (!accessKey || !secretKey) {
-  console.log('⚠️ Missing KLING_ACCESS_KEY or KLING_SECRET_KEY');
-  return null;
-}
+//   if (!accessKey || !secretKey) {
+//   console.log('⚠️ Missing KLING_ACCESS_KEY or KLING_SECRET_KEY');
+//   return null;
+// }
   
   if (!createPath || !taskPath) {
     console.log('⚠️ Missing KLING_IMAGE_TO_VIDEO_PATH or KLING_TASK_GET_PATH');
@@ -341,17 +346,9 @@ async function generateVideoWithKling(imageFilePath, prompt) {
         console.log('Kling poll raw:', pollText.substring(0, 300));
       }
 
-      const status =
-        pollData?.data?.status ||
-        pollData?.status ||
-        pollData?.task_status;
-
-      const videoUrl =
-        pollData?.data?.video_url ||
-        pollData?.data?.url ||
-        pollData?.video_url ||
-        pollData?.url;
-
+      const status = pollData?.data?.task_status;
+      const videoUrl = pollData?.data?.task_result?.videos?.[0]?.url;
+      
       if (videoUrl) {
         console.log('✅ Kling video done');
         const dl = await fetch(videoUrl);
