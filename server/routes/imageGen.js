@@ -112,52 +112,42 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     console.log('🎨 GPT Image edit...');
     console.log('🎨 Edit:', editPrompt.substring(0, 100) + '...');
 
-    const fullPath = path.join(uploadDir, path.basename(avatarImagePath));
-    if (!fs.existsSync(fullPath)) {
-      console.error('Avatar not found:', fullPath);
-      return null;
+    let fileBuffer;
+    let mimeType = 'image/png';
+    let filename = 'avatar.png';
+
+    // Handle external URLs (https://...)
+    if (avatarImagePath.startsWith('http://') || avatarImagePath.startsWith('https://')) {
+      console.log('🎨 Downloading external avatar...');
+      const dlRes = await fetch(avatarImagePath);
+      if (!dlRes.ok) {
+        console.error('Failed to download avatar:', dlRes.status);
+        return null;
+      }
+      fileBuffer = Buffer.from(await dlRes.arrayBuffer());
+      const ct = dlRes.headers.get('content-type') || '';
+      if (ct.includes('jpeg') || ct.includes('jpg')) mimeType = 'image/jpeg';
+      filename = 'avatar.' + (mimeType === 'image/jpeg' ? 'jpg' : 'png');
+    } else {
+      // Local path — resolve from uploads directory
+      const fullPath = path.join(uploadDir, path.basename(avatarImagePath));
+      if (!fs.existsSync(fullPath)) {
+        console.error('Avatar not found:', fullPath);
+        return null;
+      }
+      fileBuffer = fs.readFileSync(fullPath);
+      if (fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')) mimeType = 'image/jpeg';
+      filename = path.basename(fullPath);
     }
 
-    const mimeType =
-      fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
-        ? 'image/jpeg'
-        : 'image/png';
+    const strongPrompt = `Edit this photo of a person. Keep the EXACT same person — same face, same eyes, same skin, same hair, same wings if any. Do not change their identity or appearance at all. Only change what is specified below.
 
-    const fileBuffer = fs.readFileSync(fullPath);
+${editPrompt}
 
-    const strongPrompt = `
-      You are editing an existing photo.
-      
-      The person in the image must remain EXACTLY the same.
-      
-      STRICT RULES:
-      - Keep the same face (do not change identity)
-      - Keep same eyes, nose, lips, jawline
-      - Keep same skin tone
-      - Keep same hairstyle
-      - Keep same wings (do not remove or redesign them)
-      
-      Only modify what is requested below.
-      
-      Do NOT:
-      - redesign the face
-      - beautify or change facial structure
-      - change identity
-
-      Do not reinterpret the person. Treat this as editing the same photo.
-      
-      EDIT INSTRUCTIONS:
-      ${editPrompt}
-      
-      STYLE:
-      - photorealistic
-      - natural lighting
-      - realistic proportions
-      - high detail skin
-      `;
+Output a photorealistic image with natural lighting.`;
     const fd = new FormData();
     fd.append('model', 'gpt-image-1');
-    fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), path.basename(fullPath));
+    fd.append('image[]', new Blob([fileBuffer], { type: mimeType }), filename);
     fd.append('prompt', strongPrompt);
     fd.append('quality', 'high');
     fd.append('size', '1024x1024');
@@ -223,17 +213,15 @@ async function generateVideoWithKling(imageFilePath, prompt) {
     return null;
   }
   
-  const now = Math.floor(Date.now() / 1000);
-  
   const token = jwt.sign(
     {
       iss: accessKey,
-      nbf: now,
-      exp: now + 3600
+      exp: Math.floor(Date.now() / 1000) + 3600
     },
     secretKey,
     { algorithm: 'HS256' }
   );
+
   
   const apiBase = process.env.KLING_API_BASE || 'https://api-singapore.klingai.com';
   const createPath = process.env.KLING_IMAGE_TO_VIDEO_PATH;
@@ -429,19 +417,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
 
     const { setting, outfit, camera } = getRandomScene();
 
-    // Build the edit prompt with camera angle
-    const editPrompt = `
-      Change ONLY the background to: ${setting}.
-      Change ONLY the outfit to: ${outfit}.
-      
-      Use this camera angle: ${camera}.
-      
-      IMPORTANT:
-      - Keep the exact same woman
-      - Keep the exact same face
-      - Keep the same wings visible
-      - Do NOT change facial features
-      `;
+    const editPrompt = `Place this exact person in: ${setting}. Dress them in: ${outfit}. Camera: ${camera}. Keep the same face, same hair, same body, same wings. Photorealistic.`;
     console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
     // Get the avatar's public URL for fal.ai to fetch
 
