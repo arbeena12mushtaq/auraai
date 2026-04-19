@@ -33,19 +33,20 @@ function sanitizePrompt(text) {
 
 function getRandomScene() {
   const scenes = [
-    { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'casual elegant dress' },
-    { setting: 'beach during golden hour, ocean behind', outfit: 'summer sundress' },
-    { setting: 'modern apartment, soft daylight, on sofa', outfit: 'cozy sweater and jeans' },
-    { setting: 'rooftop restaurant, city lights, night', outfit: 'elegant evening wear' },
-    { setting: 'garden with flowers, soft sunlight', outfit: 'floral blouse and skirt' },
-    { setting: 'park in autumn, golden leaves', outfit: 'leather jacket and boots' },
-    { setting: 'bedroom, morning sunlight through curtains', outfit: 'silk pajamas' },
-    { setting: 'cobblestone street at sunset, European city', outfit: 'fitted top and skirt' },
-    { setting: 'swimming pool area, sunny day', outfit: 'casual athletic wear' },
-    { setting: 'kitchen cooking, natural window light', outfit: 'apron over casual clothes' },
-    { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder top and jeans' },
-    { setting: 'luxury car interior, leather seats', outfit: 'blazer and silk blouse' },
+    { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'tight elegant mini dress, stylish and alluring' },
+    { setting: 'beach during golden hour, ocean behind', outfit: 'glamorous beachwear, flowing sheer wrap, seductive fashion style' },
+    { setting: 'modern apartment, soft daylight, on sofa', outfit: 'silky fitted loungewear, chic and attractive' },
+    { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black cocktail dress, bold and glamorous' },
+    { setting: 'garden with flowers, soft sunlight', outfit: 'fantasy-inspired fitted dress, romantic and alluring' },
+    { setting: 'park in autumn, golden leaves', outfit: 'form-fitting leather jacket, short skirt, confident fashion look' },
+    { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear' },
+    { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable and captivating' },
+    { setting: 'swimming pool area, sunny day', outfit: 'luxury resort wear, glamorous and confident' },
+    { setting: 'kitchen cooking, natural window light', outfit: 'cute fitted apron over stylish short dress' },
+    { setting: 'balcony overlooking ocean, sunset sky', outfit: 'off-shoulder fitted top and sleek skirt, sensual fashion style' },
+    { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
   ];
+
   const cameras = [
     'selfie angle, phone held at arm length, slightly above eye level, front facing',
     'close-up portrait, face filling frame, shallow depth of field, looking at camera',
@@ -60,13 +61,16 @@ function getRandomScene() {
     'leaning against wall, 3/4 body, casual cool pose',
     'close-up selfie, big smile, slightly tilted head, warm expression',
   ];
+
+  const chosenScene = scenes[Math.floor(Math.random() * scenes.length)];
+  const chosenCamera = cameras[Math.floor(Math.random() * cameras.length)];
+
   return {
-    setting: scenes[Math.floor(Math.random() * scenes.length)].setting,
-    outfit: scenes[Math.floor(Math.random() * scenes.length)].outfit,
-    camera: cameras[Math.floor(Math.random() * cameras.length)],
+    setting: chosenScene.setting,
+    outfit: chosenScene.outfit,
+    camera: chosenCamera,
   };
 }
-
 // ===== Pollinations.ai — FREE, for avatar creation =====
 
 async function generateWithPollinations(prompt, width = 1024, height = 1024) {
@@ -106,15 +110,38 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
     // Format: -F "model=gpt-image-1" -F "image[]=@file.png" -F "prompt=..." 
     const FormData = require('form-data');
     const fd = new FormData();
+    
     fd.append('model', 'gpt-image-1');
-    fd.append('image[]', fs.createReadStream(fullPath), {
+    fd.append('image', fs.createReadStream(fullPath), {
       filename: path.basename(fullPath),
-      contentType: fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg') ? 'image/jpeg' : 'image/png',
+      contentType: fullPath.endsWith('.jpg') || fullPath.endsWith('.jpeg')
+        ? 'image/jpeg'
+        : 'image/png',
     });
-    fd.append('prompt', editPrompt);
-    fd.append('quality', 'low');
+    
+    const strongPrompt = `
+    Use the provided image as the identity reference.
+    
+    Keep the SAME person exactly:
+    - same face
+    - same identity
+    - same skin tone
+    - same facial features
+    - same hairstyle
+    
+    DO NOT change the face.
+    
+    Modify ONLY what is requested below:
+    ${editPrompt}
+    
+    Keep the result photorealistic, natural lighting, high detail skin texture, realistic proportions.
+    `;
+    
+    fd.append('prompt', strongPrompt);
+    fd.append('quality', 'high');
     fd.append('size', '1024x1024');
-
+    
+        
     const res = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
       headers: {
@@ -321,8 +348,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { setting, outfit, camera } = getRandomScene();
 
     // Build the edit prompt with camera angle
-    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Photorealistic, natural lighting, high resolution.`;
-
+    const editPrompt = `Change the setting to: ${setting}. Change the outfit to: ${outfit}. Camera angle: ${camera}. Keep the exact same person, same face, same identity, same skin tone, same hairstyle. Glamorous fantasy aesthetic, attractive styling, photorealistic, natural lighting, high resolution.`;
     console.log('📸 Scene:', setting.substring(0, 40), '| Camera:', camera.substring(0, 40));
 
     // Get the avatar's public URL for fal.ai to fetch
