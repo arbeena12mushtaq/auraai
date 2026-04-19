@@ -221,12 +221,17 @@ async function generateVideoWithKling(imageFilePath, prompt) {
   const token = jwt.sign(
     {
       iss: accessKey,
-      iat: now,
-      nbf: now - 5,
-      exp: now + 3600
+      exp: now + 1800,
+      nbf: now - 5
     },
     secretKey,
-    { algorithm: 'HS256' }
+    {
+      algorithm: 'HS256',
+      header: {
+        alg: 'HS256',
+        typ: 'JWT'
+      }
+    }
   );
 
   
