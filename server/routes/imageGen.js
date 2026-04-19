@@ -143,6 +143,8 @@ async function editWithGPTImage(avatarImagePath, editPrompt) {
       - redesign the face
       - beautify or change facial structure
       - change identity
+
+      Do not reinterpret the person. Treat this as editing the same photo.
       
       EDIT INSTRUCTIONS:
       ${editPrompt}
