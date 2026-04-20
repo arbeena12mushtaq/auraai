@@ -3,15 +3,6 @@ import { useAuth } from '../hooks/useAuth';
 import { api, getMessagesLeft, getToken, TOKEN_COSTS, canUseFeature, getUserTokens } from '../utils/api';
 import { Avatar } from '../components/UI';
 
-const ensurePuterAuth = async () => {
-  if (!window.puter) throw new Error('Puter.js not loaded');
-
-  const signedIn = await window.puter.auth.isSignedIn();
-  if (!signedIn) {
-    await window.puter.auth.signIn();
-  }
-};
-
 // Random scene generator
 function getRandomScene() {
   const scenes = [
@@ -132,225 +123,82 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     } catch { alert('Microphone access denied.'); }
   };
 
-  // ===== Generate Image via Puter.js (Nano Banana — FREE) =====
- const handleGenerateImage = async () => {
-  if (!canUseFeature(user, 'image') && !user?.is_admin) {
-    onNavigate('pricing');
-    return;
-  }
+  // ===== Generate Image on the backend =====
+  const handleGenerateImage = async () => {
+    if (!canUseFeature(user, 'image') && !user?.is_admin) { onNavigate('pricing'); return; }
+    setMediaLoading('image');
+    setMediaProgress(0);
+    const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 12, 90)), 600);
 
-  try {
-  await ensurePuterAuth();
-} catch (e) {
-  console.error('Puter auth failed full:', e);
-  console.error('message:', e?.message);
-  console.error('error:', e?.error);
-  console.error('stack:', e?.stack);
-  alert(e?.message || e?.error || 'Puter sign-in failed');
-  return;
-}
-
-  setMediaLoading('image');
-  setMediaProgress(0);
-  const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 12, 90)), 600);
-
-  try {
-    await api('/image/deduct-tokens', {
-      method: 'POST',
-      body: {
-        action: 'image_gen',
-        amount: TOKEN_COSTS.image,
-        companionId: companion.id,
-        description: `Photo of ${companion.name}`
-      }
-    });
-    const { setting, outfit, camera } = getRandomScene();
-    const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const desc = companion.description || companion.personality || '';
-
-    let imageDataUrl = null;
-
-    if (companion.avatar_url && window.puter) {
-      try {
-        const avatarRes = await fetch(companion.avatar_url);
-        const avatarBlob = await avatarRes.blob();
-
-        const avatarBase64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const full = reader.result || '';
-            resolve(String(full).split(',')[1]);
-          };
-          reader.readAsDataURL(avatarBlob);
-        });
-
-        const editPrompt = `Edit this photo. Keep the EXACT same person, same face, same features, same wings if any. Place them in: ${setting}. Dress them in: ${outfit}. Camera angle: ${camera}. Photorealistic, professional fashion photography, tasteful, fully clothed.`;
-
-        const imgEl = await window.puter.ai.txt2img(editPrompt, {
-          model: 'gemini-2.5-flash-image-preview',
-          input_images: [avatarBase64],
-        });
-
-        if (imgEl?.src) imageDataUrl = imgEl.src;
-      } catch (e) {
-        console.log('Puter edit failed, trying text-to-image:', e);
-      }
-    }
-
-    if (!imageDataUrl && window.puter) {
-      const prompt = `photorealistic fantasy ${gender}, ${desc}, in ${setting}, wearing ${outfit}, ${camera}, professional editorial photography, natural lighting, tasteful, fully clothed`;
-
-      const imgEl = await window.puter.ai.txt2img(prompt, {
-        model: 'gemini-2.5-flash-image-preview',
+    try {
+      const data = await api('/image/generate-scene', {
+        method: 'POST',
+        body: { companionId: companion.id },
       });
 
-      if (imgEl?.src) imageDataUrl = imgEl.src;
-    }
+      clearInterval(interval);
+      setMediaProgress(100);
 
-    clearInterval(interval);
-    setMediaProgress(100);
-
-    if (imageDataUrl) {
-      setMessages(p => [...p, {
-        role: 'assistant',
-        type: 'image',
-        content: '📸',
-        media_url: imageDataUrl,
-        created_at: new Date().toISOString(),
-      }]);
-
-      api('/image/save-media', {
-        method: 'POST',
-        body: {
-          companionId: companion.id,
+      if (data?.imageUrl) {
+        setMessages(p => [...p, {
+          role: 'assistant',
           type: 'image',
-          mediaUrl: imageDataUrl,
-          caption: '📸'
-        }
-      }).catch(() => {});
-
-      refreshUser();
-    } else {
-      alert('Image generation failed. Please try again.');
+          content: '📸',
+          media_url: data.imageUrl,
+          created_at: data.created_at || new Date().toISOString(),
+        }]);
+        refreshUser();
+      } else {
+        alert('Image generation failed. Please try again.');
+      }
+    } catch (err) {
+      clearInterval(interval);
+      if (err.code === 'NO_TOKENS') onNavigate('pricing');
+      else alert(err.error || err.message || 'Image generation failed');
     }
-  } catch (err) {
-    clearInterval(interval);
-    if (err.code === 'NO_TOKENS') onNavigate('pricing');
-    else alert(err.error || err.message || 'Image generation failed');
-  }
+    setMediaLoading(null);
+    setMediaProgress(0);
+  };
 
-  setMediaLoading(null);
-  setMediaProgress(0);
-};
-  
-  // ===== Generate Video via Puter.js (Veo 3.1 Lite — FREE) =====
+  // ===== Generate Video on the backend =====
   const handleGenerateVideo = async () => {
-  if (!canUseFeature(user, 'video') && !user?.is_admin) {
-    onNavigate('pricing');
-    return;
-  }
+    if (!canUseFeature(user, 'video') && !user?.is_admin) { onNavigate('pricing'); return; }
+    setMediaLoading('video');
+    setMediaProgress(0);
+    const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 5, 85)), 1000);
 
-  try {
-    await ensurePuterAuth();
-  } catch (e) {
-    console.error('Puter auth failed:', e);
-    alert('Please allow the Puter popup and try again.');
-    return;
-  }
-
-  setMediaLoading('video');
-  setMediaProgress(0);
-  const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 5, 85)), 1000);
-
-  try {
-    await api('/image/deduct-tokens', {
-      method: 'POST',
-      body: {
-        action: 'video_gen',
-        amount: TOKEN_COSTS.video,
-        companionId: companion.id,
-        description: `Video of ${companion.name}`
-      }
-    });
-
-    const { setting, outfit } = getRandomScene();
-    const gender = companion.category === 'Guys' ? 'man' : 'woman';
-    const desc = companion.description || companion.personality || '';
-    const prompt = `A ${gender}, ${desc}, in ${setting}, wearing ${outfit}, slight natural movement, soft smile, cinematic lighting, photorealistic, tasteful, fully clothed`;
-
-    let videoDataUrl = null;
-
-    if (window.puter) {
-      try {
-        const videoEl = await window.puter.ai.txt2vid(prompt, {
-          model: 'veo-3.1-lite-generate-preview',
-          seconds: 4,
-        });
-
-        if (videoEl?.src) {
-          videoDataUrl = videoEl.src;
-        }
-      } catch (e) {
-        console.error('Puter video failed:', e);
-      }
-    }
-
-    clearInterval(interval);
-    setMediaProgress(100);
-
-    if (videoDataUrl) {
-      setMessages(p => [...p, {
-        role: 'assistant',
-        type: 'video',
-        content: '🎬',
-        media_url: videoDataUrl,
-        created_at: new Date().toISOString(),
-      }]);
-
-      api('/image/save-media', {
+    try {
+      const data = await api('/image/generate-video', {
         method: 'POST',
-        body: {
-          companionId: companion.id,
+        body: { companionId: companion.id },
+      });
+
+      clearInterval(interval);
+      setMediaProgress(100);
+
+      if (data?.videoUrl) {
+        setMessages(p => [...p, {
+          role: 'assistant',
           type: 'video',
-          mediaUrl: videoDataUrl,
-          caption: '🎬'
-        }
-      }).catch(() => {});
-
-      refreshUser();
-    } else {
-      alert('Video generation failed. Please try again.');
+          content: '🎬',
+          media_url: data.videoUrl,
+          created_at: data.created_at || new Date().toISOString(),
+        }]);
+        refreshUser();
+      } else {
+        alert('Video generation failed. Please try again.');
+      }
+    } catch (err) {
+      clearInterval(interval);
+      if (err.code === 'NO_TOKENS') onNavigate('pricing');
+      else alert(err.error || err.message || 'Video generation failed');
     }
-  } catch (err) {
-    clearInterval(interval);
-    if (err.code === 'NO_TOKENS') onNavigate('pricing');
-    else alert(err.error || err.message || 'Video generation failed');
-  }
+    setMediaLoading(null);
+    setMediaProgress(0);
+  };
 
-  setMediaLoading(null);
-  setMediaProgress(0);
-};
-
-  const testPuterLogin = async () => {
-  try {
-    const res = await window.puter.auth.signIn();
-    console.log('signIn result:', res);
-
-    const signedInAfter = await window.puter.auth.isSignedIn();
-    console.log('signed in after:', signedInAfter);
-
-    alert('Puter login success');
-  } catch (e) {
-    console.error('RAW PUTER LOGIN ERROR', e);
-    console.error('error:', e?.error);
-    console.error('message:', e?.message);
-    alert(e?.error || e?.message || 'Puter login failed');
-  }
-};
-  
   const fts = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
-  
   return (
     <div className="aura-chat-page">
       <div className="aura-chat-header">
@@ -437,7 +285,6 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         </div>
         <div className="aura-chat-action-row">
           <span className="aura-chat-action-label">Show me the scene:</span>
-          <button className="aura-chat-action-btn" onClick={testPuterLogin}> Test Puter Login </button>
           <button className="aura-chat-action-btn" onClick={handleGenerateImage} disabled={loading || !!mediaLoading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span>Image</span><span className="aura-chat-token-cost">{TOKEN_COSTS.image} tokens</span>

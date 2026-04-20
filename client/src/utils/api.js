@@ -95,7 +95,7 @@ export function canUseFeature(user, feature) {
   // Check if user has enough tokens (works for any user with tokens, plan or not)
   const tokens = user.tokens || 0;
   if (feature === 'image') return tokens >= TOKEN_COSTS.image;
-  if (feature === 'video') return tokens >= TOKEN_COSTS.image; // Video falls back to image, charge image price
+  if (feature === 'video') return tokens >= TOKEN_COSTS.video;
   if (feature === 'voice') return tokens >= TOKEN_COSTS.voice;
   
   return false;
