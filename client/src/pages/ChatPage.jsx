@@ -140,12 +140,15 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
   }
 
   try {
-    await ensurePuterAuth();
-  } catch (e) {
-    console.error('Puter auth failed:', e);
-    alert('Please allow the Puter popup and try again.');
-    return;
-  }
+  await ensurePuterAuth();
+} catch (e) {
+  console.error('Puter auth failed full:', e);
+  console.error('message:', e?.message);
+  console.error('error:', e?.error);
+  console.error('stack:', e?.stack);
+  alert(e?.message || e?.error || 'Puter sign-in failed');
+  return;
+}
 
   setMediaLoading('image');
   setMediaProgress(0);
@@ -161,7 +164,21 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         description: `Photo of ${companion.name}`
       }
     });
-
+const testPuterLogin = async () => {
+  try {
+    console.log('puter exists?', !!window.puter);
+    console.log('auth exists?', !!window.puter?.auth);
+    console.log('signed in before?', await window.puter.auth.isSignedIn());
+    const result = await window.puter.auth.signIn();
+    console.log('signIn result:', result);
+    console.log('signed in after?', await window.puter.auth.isSignedIn());
+  } catch (e) {
+    console.error('RAW SIGNIN ERROR', e);
+    console.error('message:', e?.message);
+    console.error('cause:', e?.cause);
+    console.error('stringified:', JSON.stringify(e, null, 2));
+  }
+};
     const { setting, outfit, camera } = getRandomScene();
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
     const desc = companion.description || companion.personality || '';
