@@ -164,21 +164,6 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         description: `Photo of ${companion.name}`
       }
     });
-const testPuterLogin = async () => {
-  try {
-    console.log('puter exists?', !!window.puter);
-    console.log('auth exists?', !!window.puter?.auth);
-    console.log('signed in before?', await window.puter.auth.isSignedIn());
-    const result = await window.puter.auth.signIn();
-    console.log('signIn result:', result);
-    console.log('signed in after?', await window.puter.auth.isSignedIn());
-  } catch (e) {
-    console.error('RAW SIGNIN ERROR', e);
-    console.error('message:', e?.message);
-    console.error('cause:', e?.cause);
-    console.error('stringified:', JSON.stringify(e, null, 2));
-  }
-};
     const { setting, outfit, camera } = getRandomScene();
     const gender = companion.category === 'Guys' ? 'man' : 'woman';
     const desc = companion.description || companion.personality || '';
@@ -346,9 +331,26 @@ const testPuterLogin = async () => {
   setMediaProgress(0);
 };
 
+  const testPuterLogin = async () => {
+  try {
+    const res = await window.puter.auth.signIn();
+    console.log('signIn result:', res);
+
+    const signedInAfter = await window.puter.auth.isSignedIn();
+    console.log('signed in after:', signedInAfter);
+
+    alert('Puter login success');
+  } catch (e) {
+    console.error('RAW PUTER LOGIN ERROR', e);
+    console.error('error:', e?.error);
+    console.error('message:', e?.message);
+    alert(e?.error || e?.message || 'Puter login failed');
+  }
+};
   
   const fts = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
+  
   return (
     <div className="aura-chat-page">
       <div className="aura-chat-header">
@@ -435,6 +437,7 @@ const testPuterLogin = async () => {
         </div>
         <div className="aura-chat-action-row">
           <span className="aura-chat-action-label">Show me the scene:</span>
+          <button className="aura-chat-action-btn" onClick={testPuterLogin}> Test Puter Login </button>
           <button className="aura-chat-action-btn" onClick={handleGenerateImage} disabled={loading || !!mediaLoading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span>Image</span><span className="aura-chat-token-cost">{TOKEN_COSTS.image} tokens</span>
