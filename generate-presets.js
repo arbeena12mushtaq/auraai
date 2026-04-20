@@ -1,147 +1,139 @@
-/**
- * GENERATE PRESET AVATARS
- * 
- * Run this ONCE on your server to generate AI images for all preset companions.
- * Usage: OPENAI_API_KEY=sk-xxx DATABASE_URL=postgres://... node generate-presets.js
- * 
- * Or run it on Railway:
- *   1. Go to your auraai service
- *   2. Click "Settings" → "Run Command" 
- *   3. Enter: node server/generate-presets.js
- */
-
-require('dotenv').config();
+const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
+const { pool } = require('../config/database');
+const { authMiddleware } = require('../middleware/auth');
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-});
-
-const uploadDir = path.join(__dirname, 'server', 'uploads');
+const router = express.Router();
+const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// Also try relative path for when run from server directory
-const uploadDir2 = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir2)) fs.mkdirSync(uploadDir2, { recursive: true });
+const TOKEN_COSTS = { image: 5, video: 15 };
 
-const finalUploadDir = fs.existsSync(path.join(__dirname, 'server')) ? uploadDir : uploadDir2;
-
-async function generateImage(prompt) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
-
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'dall-e-3',
-      prompt: prompt,
-      n: 1,
-      size: '1024x1024',
-      quality: 'hd',
-      response_format: 'b64_json',
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`DALL-E error ${res.status}: ${err}`);
+async function deductTokens(userId, amount, action, description) {
+  const user = await pool.query('SELECT tokens, is_admin FROM users WHERE id = $1', [userId]);
+  if (!user.rows[0]) throw { code: 'NOT_FOUND', error: 'User not found' };
+  if (user.rows[0].is_admin) return true;
+  if ((user.rows[0].tokens || 0) < amount) {
+    throw { code: 'NO_TOKENS', error: `Not enough tokens. Need ${amount}, have ${user.rows[0].tokens || 0}` };
   }
-
-  const data = await res.json();
-  return Buffer.from(data.data[0].b64_json, 'base64');
+  await pool.query('UPDATE users SET tokens = tokens - $1 WHERE id = $2', [amount, userId]);
+  await pool.query(
+    'INSERT INTO token_ledger (user_id, amount, action, description) VALUES ($1, $2, $3, $4)',
+    [userId, -amount, action, description]
+  );
+  return true;
 }
 
-// Safe prompts that pass DALL-E content policy
-const PRESET_PROMPTS = [
-  // Girls - Realistic
-  { name: 'Aria', prompt: 'Professional fashion photography headshot of a young woman with blonde wavy hair, blue eyes, warm genuine smile, wearing a cream knit sweater, soft golden hour lighting, shallow depth of field, magazine quality portrait' },
-  { name: 'Luna', prompt: 'Professional portrait photograph of a confident young Latina woman with long dark hair, brown eyes, wearing a stylish leather jacket, urban city background blurred, warm tones, editorial fashion photography style' },
-  { name: 'Emilia', prompt: 'Professional portrait of a young woman with red curly hair, green eyes, playful confident expression, wearing a casual white blouse, natural outdoor lighting, garden background blurred, warm color palette, high fashion photography' },
-  { name: 'Zara', prompt: 'Professional portrait photograph of a confident young Black woman with natural curly hair, brown eyes, radiant smile, wearing a vibrant yellow top, studio lighting, clean background, fashion editorial style' },
-  { name: 'Mei', prompt: 'Professional portrait of a gentle young East Asian woman with straight brown hair, hazel eyes, soft warm smile, wearing a light blue cardigan, cafe background blurred, natural window lighting, magazine photography' },
-  { name: 'Sofia', prompt: 'Professional portrait of a young Latina woman with wavy brown hair, brown eyes, thoughtful serene expression, wearing an earth-tone dress, golden hour outdoor lighting, nature background blurred, editorial quality' },
-  { name: 'Nadia', prompt: 'Professional portrait of a young Middle Eastern woman with long dark hair, hazel eyes, mysterious confident smile, wearing elegant dark clothing, dramatic studio lighting, dark background, high fashion editorial' },
-  { name: 'Elena', prompt: 'Professional portrait of a young woman with straight blonde hair, blue eyes, energetic bright smile, wearing athletic casual wear, bright natural outdoor lighting, park background, lifestyle photography style' },
-  { name: 'Isabella', prompt: 'Professional portrait of a young Latina woman with wavy dark hair, brown eyes, warm sweet expression, wearing a floral summer dress, warm sunset lighting, outdoor setting, romantic photography style' },
-  { name: 'Aisha', prompt: 'Professional portrait of a young Black woman with curly natural hair, brown eyes, wise serene expression, wearing elegant earth tones, soft studio lighting, warm color palette, fine art portrait photography' },
+function sanitizePrompt(text) {
+  return (text || '')
+    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx|sexual|erotic)\b/gi, '')
+    .replace(/\bsexy\b/gi, 'glamorous')
+    .replace(/\bhot\b/gi, 'stunning')
+    .replace(/\bseductive\b/gi, 'elegant')
+    .replace(/\bsensual\b/gi, 'refined')
+    .replace(/\balluring\b/gi, 'stylish')
+    .replace(/\bfantasy\b/gi, 'mythical')
+    .replace(/\bsuccubus\b/gi, 'dark angel')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  // Guys
-  { name: 'Kai', prompt: 'Professional portrait of a confident young East Asian man with short black hair, brown eyes, charming smile, wearing a fitted dark henley shirt, urban background blurred, editorial fashion photography, warm tones' },
-  { name: 'Marcus', prompt: 'Professional portrait of a warm young Black man with short hair, brown eyes, genuine friendly smile, wearing a casual denim jacket, outdoor natural lighting, lifestyle photography style' },
-  { name: 'Liam', prompt: 'Professional portrait of a young man with short brown hair, green eyes, witty confident smirk, wearing a casual blazer, cafe background blurred, warm natural lighting, editorial style portrait' },
+// Pollinations — FREE, no API key, for avatar fallback
+async function generateWithPollinations(prompt, width = 1024, height = 1024) {
+  try {
+    const seed = Math.floor(Math.random() * 999999);
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
+    console.log(`🌸 Pollinations (seed:${seed})...`);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    if (!(res.headers.get('content-type') || '').includes('image')) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length < 3000) return null;
+    console.log(`✅ Pollinations (${Math.round(buffer.length / 1024)}KB)`);
+    return buffer;
+  } catch (err) { console.error('Pollinations:', err.message); return null; }
+}
 
-  // Anime
-  { name: 'Sakura', prompt: 'Anime character portrait, young woman with pink straight hair, green eyes, shy gentle expression, wearing a cute pastel school uniform, cherry blossom background, soft lighting, clean modern anime art style, vibrant colors, detailed eyes, Studio Ghibli inspired' },
-  { name: 'Yuki', prompt: 'Anime character portrait, energetic young woman with short white hair, bright blue eyes, cheerful excited expression, wearing a colorful casual outfit, neon city background, modern anime art style, vibrant dynamic colors, detailed illustration' },
-  { name: 'Mia', prompt: 'Anime character portrait, gentle young woman with long purple hair, gray eyes, soft shy smile, wearing a cozy oversized sweater, rainy window background, modern anime art style, soft muted colors, atmospheric, detailed illustration' },
-];
+// ===== ROUTES =====
 
-async function main() {
-  console.log('🎨 Starting preset avatar generation...');
-  console.log(`📁 Saving to: ${finalUploadDir}`);
-  console.log(`🔑 OpenAI key: ${process.env.OPENAI_API_KEY ? 'SET' : 'MISSING'}`);
-  console.log(`🗄️  Database: ${process.env.DATABASE_URL ? 'SET' : 'MISSING'}`);
-  console.log('');
-
-  let success = 0;
-  let failed = 0;
-
-  for (const preset of PRESET_PROMPTS) {
-    try {
-      console.log(`🎨 Generating ${preset.name}...`);
-      const buffer = await generateImage(preset.prompt);
-      
-      const filename = `preset-${preset.name.toLowerCase()}-${Date.now()}.png`;
-      const filepath = path.join(finalUploadDir, filename);
-      fs.writeFileSync(filepath, buffer);
-      
-      const avatarUrl = `/uploads/${filename}`;
-      
-      // Update database
-      const result = await pool.query(
-        'UPDATE companions SET avatar_url = $1 WHERE name = $2 AND is_preset = true',
-        [avatarUrl, preset.name]
-      );
-      
-      if (result.rowCount > 0) {
-        console.log(`  ✅ ${preset.name}: saved (${Math.round(buffer.length / 1024)}KB) → ${avatarUrl}`);
-      } else {
-        console.log(`  ⚠️  ${preset.name}: image saved but no DB row found (name mismatch?)`);
-      }
-      
-      success++;
-      
-      // Small delay to avoid rate limits
-      await new Promise(r => setTimeout(r, 2000));
-    } catch (err) {
-      console.log(`  ❌ ${preset.name}: ${err.message}`);
-      failed++;
-      // Wait longer on error (might be rate limited)
-      await new Promise(r => setTimeout(r, 5000));
+// --- Avatar creation (server-side, used during character creation) ---
+router.post('/generate', authMiddleware, async (req, res) => {
+  try {
+    if (!req.body.description?.trim()) {
+      return res.status(400).json({ error: 'Please provide a description.' });
     }
+
+    const gender = req.body.category === 'Guys' ? 'man' : 'woman';
+    const isAnime = req.body.art_style === 'Anime';
+    const desc = sanitizePrompt(req.body.description);
+
+    let prompt;
+    if (isAnime) {
+      prompt = `anime character portrait, ${gender}, ${desc}, anime art, vibrant colors, detailed eyes, front facing, looking at camera, fantasy character design`;
+    } else {
+      prompt = `photorealistic portrait of a fantasy ${gender}, ${desc}, professional photography, 85mm lens, natural lighting, detailed skin, front facing, looking at camera, high resolution, fantasy character`;
+    }
+
+    console.log('🎨 Avatar prompt:', prompt);
+
+    let imageBuffer = await generateWithPollinations(prompt);
+    if (!imageBuffer) return res.status(500).json({ error: 'Image generation failed. Try uploading.' });
+
+    const filename = `gen-${Date.now()}-${Math.random().toString(36).substr(2, 8)}.png`;
+    fs.writeFileSync(path.join(uploadDir, filename), imageBuffer);
+    console.log(`✅ Avatar: ${filename}`);
+
+    res.json({ avatar_url: `/uploads/${filename}` });
+  } catch (err) {
+    console.error('Avatar error:', err);
+    res.status(500).json({ error: 'Failed to generate avatar' });
   }
-
-  console.log('');
-  console.log(`✅ Done! ${success} generated, ${failed} failed`);
-  console.log('');
-  
-  // Show current state
-  const companions = await pool.query('SELECT name, avatar_url FROM companions WHERE is_preset = true ORDER BY name');
-  console.log('Current preset avatars:');
-  companions.rows.forEach(c => {
-    const hasImage = c.avatar_url?.startsWith('/uploads/preset-');
-    console.log(`  ${hasImage ? '🖼️ ' : '📷'} ${c.name}: ${c.avatar_url || 'none'}`);
-  });
-
-  await pool.end();
-  process.exit(0);
-}
-
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
 });
+
+// --- Deduct tokens for image generation (called from frontend after Puter.js generates) ---
+router.post('/deduct-tokens', authMiddleware, async (req, res) => {
+  try {
+    const { action, amount, companionId, description } = req.body;
+    const cost = amount || TOKEN_COSTS[action] || TOKEN_COSTS.image;
+    
+    await deductTokens(req.user.id, cost, action || 'image_gen', description || 'Media generation');
+    
+    res.json({ success: true, deducted: cost });
+  } catch (err) {
+    if (err.code === 'NO_TOKENS') return res.status(403).json(err);
+    console.error('Deduct error:', err);
+    res.status(500).json({ error: 'Token deduction failed' });
+  }
+});
+
+// --- Save generated media message to DB ---
+router.post('/save-media', authMiddleware, async (req, res) => {
+  try {
+    const { companionId, type, mediaUrl, caption } = req.body;
+    if (!companionId) return res.status(400).json({ error: 'companionId required' });
+    
+    await pool.query(
+      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,$4,$5)`,
+      [req.user.id, companionId, caption || '📸', type || 'image', mediaUrl || '']
+    );
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Save media error:', err);
+    res.status(500).json({ error: 'Failed to save media' });
+  }
+});
+
+// --- Get companion data (for frontend to access avatar for editing) ---
+router.get('/companion/:id', authMiddleware, async (req, res) => {
+  try {
+    const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [req.params.id]);
+    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ companion: comp.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+module.exports = router;

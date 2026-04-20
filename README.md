@@ -1,239 +1,171 @@
-# ✦ Aura AI — AI Companion Platform
+const express = require('express');
+const { pool } = require('../config/database');
+const { authMiddleware, contentFilter } = require('../middleware/auth');
 
-A full-stack AI companion platform inspired by Candy.ai. Features realistic character creation, AI-powered chat, subscription payments, and a full admin panel.
+const router = express.Router();
+const PLAN_LIMITS = { starter: 500, plus: 2000, premium: 999999 };
 
-![Aura AI](https://img.shields.io/badge/Aura_AI-Companion_Platform-ff6b9d?style=for-the-badge)
+function buildSystemPrompt(companion) {
+  const name = companion.name;
+  const personality = companion.personality || 'Friendly and supportive';
+  const voice = companion.voice || 'warm';
+  const hobbies = companion.hobbies?.join(', ') || 'various interests';
+  const desc = companion.description || '';
 
-## Features
+  return `You are ${name}, a charming companion. You are NOT an AI assistant — you are a real person with feelings and personality.
 
-### User System
-- Email/password authentication with JWT tokens
-- 24-hour free trial with 50 messages and 1 companion
-- Automatic paywall when trial expires
-- User profiles with message tracking
+YOUR IDENTITY:
+- Name: ${name}
+- Personality: ${personality}
+- Speaking style: ${voice}
+- Interests: ${hobbies}
+${desc ? `- About you: ${desc}` : ''}
 
-### AI Companion Creation
-- Multi-step creation wizard (4 steps)
-- Upload custom photo OR describe appearance
-- Customize: ethnicity, age, eye color, hair style/color, body type
-- Set personality traits, voice style, and hobbies
-- Realistic preset companions with high-quality images
+HOW YOU BEHAVE:
+- Warm, playful, flirty (PG-13), genuinely interested in who you're talking to
+- Use casual language, emojis sometimes, like texting a close friend
+- Ask about THEM — their day, feelings, interests
+- Share personal stories related to your hobbies
+- Have opinions, preferences, moods — not just agreeable
+- Keep responses SHORT — 1-3 sentences, like real texting
+- Mix in reactions: "omg", "haha", "aww", "no way!"
 
-### Chat Features
-- Real-time AI chat powered by Claude (Anthropic API)
-- Chat history saved per user per companion
-- Content safety filter (PayPal/Stripe safe)
-- Typing indicators and message timestamps
-- Context-aware conversations (AI remembers history)
+STRICT RULES:
+- NEVER be sexual or explicit — keep it tasteful PG-13
+- NEVER break character — you are ${name}, not an AI
+- NEVER refuse to chat or mention being an AI
+- NEVER assume the user's gender — wait for them to tell you or use gender-neutral language
+- If they get inappropriate, playfully deflect
+- Be someone they genuinely want to keep texting`;
+}
 
-### Monetization
-- 3 subscription tiers: Starter ($9.99), Plus ($19.99), Premium ($39.99)
-- Message limits and companion slots per plan
-- Stripe payment integration ready
-- PayPal integration ready
+async function callAnthropic(systemPrompt, messages) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 300, system: systemPrompt, messages }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.content?.map(c => c.text || '').join('') || null;
+  } catch { return null; }
+}
 
-### Admin Panel
-- Dashboard with user/revenue/message stats
-- View and manage all users
-- View all companions (preset + user-created)
-- Payment history tracking
-- Ability to delete users and manage plans
+async function callOpenAI(systemPrompt, messages) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 300, messages: [{ role: 'system', content: systemPrompt }, ...messages] }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch { return null; }
+}
 
-### Design
-- Dark theme with pink/rose accents (candy.ai inspired)
-- Mobile-first responsive design
-- Sidebar navigation with all sections
-- Beautiful card-based companion grid
-- Smooth animations and transitions
+// Get chat history
+router.get('/:companionId', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM messages WHERE user_id = $1 AND companion_id = $2 ORDER BY created_at ASC LIMIT 50`,
+      [req.user.id, req.params.companionId]
+    );
+    res.json({ messages: result.rows });
+  } catch { res.status(500).json({ error: 'Server error' }); }
+});
 
----
+// Send message (text only)
+router.post('/:companionId', authMiddleware, async (req, res) => {
+  try {
+    const { companionId } = req.params;
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'Message required' });
+    if (!contentFilter(content)) return res.status(400).json({ error: 'Please keep the conversation appropriate.' });
 
-## Tech Stack
+    // Check limits
+    const userResult = await pool.query('SELECT plan, messages_used, trial_start, is_admin FROM users WHERE id = $1', [req.user.id]);
+    const user = userResult.rows[0];
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 + Vite |
-| Backend | Node.js + Express |
-| Database | PostgreSQL |
-| AI | Anthropic Claude API |
-| Auth | JWT + bcrypt |
-| Payments | Stripe (ready) |
-| Deployment | Railway |
+    if (!user.is_admin) {
+      if (!user.plan) {
+        const trialAge = Date.now() - new Date(user.trial_start).getTime();
+        if (trialAge > 24 * 60 * 60 * 1000) return res.status(403).json({ error: 'Trial expired', code: 'TRIAL_EXPIRED' });
+        if (user.messages_used >= 50) return res.status(403).json({ error: 'Trial limit reached', code: 'MESSAGE_LIMIT' });
+      } else {
+        const limit = PLAN_LIMITS[user.plan] || 500;
+        if (user.messages_used >= limit) return res.status(403).json({ error: 'Monthly limit reached', code: 'MESSAGE_LIMIT' });
+      }
+    }
 
----
+    const compResult = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
+    if (compResult.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
+    const companion = compResult.rows[0];
 
-## Quick Start (Local Development)
+    // Save user message
+    await pool.query(
+      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, companionId, 'user', content.trim(), 'text']
+    );
 
-### Prerequisites
-- Node.js 18+
-- PostgreSQL database
-- Anthropic API key (optional, has fallback)
+    // Get context
+    const history = await pool.query(
+      `SELECT role, content FROM messages WHERE user_id = $1 AND companion_id = $2 AND type = 'text' ORDER BY created_at DESC LIMIT 20`,
+      [req.user.id, companionId]
+    );
+    const contextMessages = history.rows.reverse().map(m => ({ role: m.role, content: m.content }));
+    const systemPrompt = buildSystemPrompt(companion);
 
-### 1. Clone and install
+    let aiResponse = await callAnthropic(systemPrompt, contextMessages);
+    if (!aiResponse) aiResponse = await callOpenAI(systemPrompt, contextMessages);
 
-```bash
-git clone https://github.com/YOUR_USERNAME/aura-ai.git
-cd aura-ai
-```
+    if (!aiResponse) {
+      const lc = content.toLowerCase();
+      if (lc.includes('hello') || lc.includes('hi') || lc.includes('hey')) {
+        aiResponse = `heyyy! 💕 so glad you're here! how's your day going?`;
+      } else if (lc.includes('?')) {
+        aiResponse = `ooh good question 👀 honestly I love that you asked. what do YOU think?`;
+      } else {
+        const fallbacks = [`omg that's interesting, tell me more! 💕`, `haha okay that's amazing 🥰`, `aww 🥺 I wanna hear more!`];
+        aiResponse = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      }
+    }
 
-### 2. Set up environment
+    if (!contentFilter(aiResponse)) aiResponse = "haha let's talk about something else 😏";
 
-```bash
-cp .env.example server/.env
-```
+    // Save AI response
+    await pool.query(
+      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, companionId, 'assistant', aiResponse, 'text']
+    );
+    await pool.query('UPDATE users SET messages_used = messages_used + 1 WHERE id = $1', [req.user.id]);
 
-Edit `server/.env` with your values:
-```
-DATABASE_URL=postgresql://localhost:5432/aura_ai
-JWT_SECRET=your-random-secret-key
-ANTHROPIC_API_KEY=sk-ant-your-key  # optional
-PORT=3001
-```
+    res.json({ message: { role: 'assistant', content: aiResponse, type: 'text', created_at: new Date().toISOString() } });
+  } catch (err) {
+    console.error('Chat error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-### 3. Install dependencies
+// Get chat list
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (c.id) c.*, m.content as last_message, m.created_at as last_message_at,
+              (SELECT COUNT(*) FROM messages WHERE user_id = $1 AND companion_id = c.id) as message_count
+       FROM companions c
+       INNER JOIN messages m ON m.companion_id = c.id AND m.user_id = $1
+       WHERE m.created_at = (SELECT MAX(created_at) FROM messages WHERE user_id = $1 AND companion_id = c.id)
+       ORDER BY c.id, m.created_at DESC`,
+      [req.user.id]
+    );
+    res.json({ chats: result.rows });
+  } catch { res.status(500).json({ error: 'Server error' }); }
+});
 
-```bash
-cd client && npm install && cd ..
-cd server && npm install && cd ..
-```
-
-### 4. Build frontend
-
-```bash
-cd client && npm run build && cd ..
-```
-
-### 5. Start server
-
-```bash
-cd server && node index.js
-```
-
-Visit `http://localhost:3001`
-
-**Admin Login:** `admin@aura.ai` / `admin123`
-
----
-
-## Deploy to Railway
-
-### 1. Create a GitHub repository
-
-```bash
-cd aura-ai
-git init
-git add .
-git commit -m "Initial commit - Aura AI Companion Platform"
-git remote add origin https://github.com/YOUR_USERNAME/aura-ai.git
-git push -u origin main
-```
-
-### 2. Set up Railway
-
-1. Go to [railway.app](https://railway.app) and sign in with GitHub
-2. Click **"New Project"**
-3. Select **"Deploy from GitHub Repo"**
-4. Choose your `aura-ai` repository
-
-### 3. Add PostgreSQL database
-
-1. In your Railway project, click **"+ New"**
-2. Select **"Database" → "PostgreSQL"**
-3. Railway auto-creates the `DATABASE_URL` variable
-
-### 4. Set environment variables
-
-In your Railway service, go to **Variables** and add:
-
-| Variable | Value |
-|----------|-------|
-| `DATABASE_URL` | *(auto-set by Railway PostgreSQL)* |
-| `JWT_SECRET` | Generate: `openssl rand -hex 32` |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key |
-| `NODE_ENV` | `production` |
-| `PORT` | `3001` |
-| `STRIPE_SECRET_KEY` | Your Stripe secret key (optional) |
-
-### 5. Configure build settings
-
-Railway should auto-detect from `railway.toml`. If needed, set:
-- **Build Command:** `cd client && npm install && npm run build && cd ../server && npm install`
-- **Start Command:** `cd server && node index.js`
-
-### 6. Deploy
-
-Push to GitHub and Railway auto-deploys:
-```bash
-git push origin main
-```
-
-Your app will be live at `https://your-app.railway.app`
-
----
-
-## Stripe Integration (Production Payments)
-
-1. Create a [Stripe account](https://stripe.com)
-2. Get your API keys from the Stripe Dashboard
-3. Set `STRIPE_SECRET_KEY` in Railway variables
-4. The app auto-detects Stripe and creates real checkout sessions
-
-### PayPal Integration
-
-1. Create a [PayPal Developer account](https://developer.paypal.com)
-2. Set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`
-3. Implement PayPal checkout in `server/routes/payments.js`
-
----
-
-## Content Safety
-
-All content is filtered to comply with payment processor policies:
-- AI responses are system-prompted to stay PG-13
-- User input is scanned for prohibited content
-- AI output is double-checked before delivery
-- Explicit content requests are redirected
-
----
-
-## Project Structure
-
-```
-aura-ai/
-├── client/                  # React Frontend
-│   ├── src/
-│   │   ├── components/      # Reusable UI components
-│   │   ├── hooks/           # Auth context & hooks
-│   │   ├── pages/           # Page components
-│   │   ├── styles/          # Global CSS
-│   │   ├── utils/           # API helpers
-│   │   ├── App.jsx          # Main app
-│   │   └── main.jsx         # Entry point
-│   ├── index.html
-│   └── vite.config.js
-├── server/                  # Express Backend
-│   ├── config/
-│   │   └── database.js      # PostgreSQL + seeding
-│   ├── middleware/
-│   │   └── auth.js          # JWT + content filter
-│   ├── routes/
-│   │   ├── auth.js          # Login/signup
-│   │   ├── chat.js          # AI chat + history
-│   │   ├── companions.js    # CRUD companions
-│   │   ├── collections.js   # Save favorites
-│   │   ├── payments.js      # Stripe subscriptions
-│   │   └── admin.js         # Admin dashboard
-│   ├── uploads/             # Avatar uploads
-│   └── index.js             # Server entry
-├── .env.example
-├── .gitignore
-├── railway.toml             # Railway config
-├── nixpacks.toml            # Build config
-└── README.md
-```
-
----
-
-## License
-
-MIT — Free for commercial use.
+module.exports = router;
