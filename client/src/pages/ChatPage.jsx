@@ -3,6 +3,15 @@ import { useAuth } from '../hooks/useAuth';
 import { api, getMessagesLeft, getToken, TOKEN_COSTS, canUseFeature, getUserTokens } from '../utils/api';
 import { Avatar } from '../components/UI';
 
+const ensurePuterAuth = async () => {
+  if (!window.puter) throw new Error('Puter.js not loaded');
+
+  const signedIn = await window.puter.auth.isSignedIn();
+  if (!signedIn) {
+    await window.puter.auth.signIn();
+  }
+};
+
 // Random scene generator
 function getRandomScene() {
   const scenes = [
@@ -124,139 +133,203 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
   };
 
   // ===== Generate Image via Puter.js (Nano Banana — FREE) =====
-  const handleGenerateImage = async () => {
-    if (!canUseFeature(user, 'image') && !user?.is_admin) { onNavigate('pricing'); return; }
-    setMediaLoading('image');
-    setMediaProgress(0);
-    const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 12, 90)), 600);
+ const handleGenerateImage = async () => {
+  if (!canUseFeature(user, 'image') && !user?.is_admin) {
+    onNavigate('pricing');
+    return;
+  }
 
-    try {
-      // Deduct tokens first
-      await api('/image/deduct-tokens', { method: 'POST', body: { action: 'image_gen', amount: TOKEN_COSTS.image, companionId: companion.id, description: `Photo of ${companion.name}` } });
+  try {
+    await ensurePuterAuth();
+  } catch (e) {
+    console.error('Puter auth failed:', e);
+    alert('Please allow the Puter popup and try again.');
+    return;
+  }
 
-      const { setting, outfit, camera } = getRandomScene();
-      const gender = companion.category === 'Guys' ? 'man' : 'woman';
-      const desc = companion.description || companion.personality || '';
+  setMediaLoading('image');
+  setMediaProgress(0);
+  const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 12, 90)), 600);
 
-      let imageDataUrl = null;
-
-      // Try image editing with reference (character-consistent)
-      if (companion.avatar_url && window.puter) {
-        try {
-          // Fetch avatar as base64
-          const avatarRes = await fetch(companion.avatar_url);
-          const avatarBlob = await avatarRes.blob();
-          const avatarBase64 = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-            reader.readAsDataURL(avatarBlob);
-          });
-          const mimeType = avatarBlob.type || 'image/png';
-
-          const editPrompt = `Edit this photo. Keep the EXACT same person, same face, same features, same wings if any. Place them in: ${setting}. Dress them in: ${outfit}. Camera angle: ${camera}. Photorealistic, professional fashion photography, tasteful, fully clothed.`;
-
-          const imgEl = await window.puter.ai.txt2img(editPrompt, {
-            model: 'gemini-2.5-flash-image-preview',
-            input_image: avatarBase64,
-            input_image_mime_type: mimeType,
-          });
-
-          if (imgEl && imgEl.src) {
-            imageDataUrl = imgEl.src;
-          }
-        } catch (e) {
-          console.log('Puter edit failed, trying text-to-image:', e.message);
-        }
+  try {
+    await api('/image/deduct-tokens', {
+      method: 'POST',
+      body: {
+        action: 'image_gen',
+        amount: TOKEN_COSTS.image,
+        companionId: companion.id,
+        description: `Photo of ${companion.name}`
       }
+    });
 
-      // Fallback: text-to-image (no consistency but still free)
-      if (!imageDataUrl && window.puter) {
-        try {
-          const prompt = `photorealistic fantasy ${gender}, ${desc}, in ${setting}, wearing ${outfit}, ${camera}, professional editorial photography, natural lighting, tasteful, fully clothed`;
-          const imgEl = await window.puter.ai.txt2img(prompt, {
-            model: 'gemini-2.5-flash-image-preview',
-          });
-          if (imgEl && imgEl.src) imageDataUrl = imgEl.src;
-        } catch (e) {
-          console.error('Puter txt2img failed:', e.message);
-        }
+    const { setting, outfit, camera } = getRandomScene();
+    const gender = companion.category === 'Guys' ? 'man' : 'woman';
+    const desc = companion.description || companion.personality || '';
+
+    let imageDataUrl = null;
+
+    if (companion.avatar_url && window.puter) {
+      try {
+        const avatarRes = await fetch(companion.avatar_url);
+        const avatarBlob = await avatarRes.blob();
+
+        const avatarBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const full = reader.result || '';
+            resolve(String(full).split(',')[1]);
+          };
+          reader.readAsDataURL(avatarBlob);
+        });
+
+        const editPrompt = `Edit this photo. Keep the EXACT same person, same face, same features, same wings if any. Place them in: ${setting}. Dress them in: ${outfit}. Camera angle: ${camera}. Photorealistic, professional fashion photography, tasteful, fully clothed.`;
+
+        const imgEl = await window.puter.ai.txt2img(editPrompt, {
+          model: 'gemini-2.5-flash-image-preview',
+          input_images: [avatarBase64],
+        });
+
+        if (imgEl?.src) imageDataUrl = imgEl.src;
+      } catch (e) {
+        console.log('Puter edit failed, trying text-to-image:', e);
       }
-
-      clearInterval(interval);
-      setMediaProgress(100);
-
-      if (imageDataUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'image', content: '📸',
-          media_url: imageDataUrl, created_at: new Date().toISOString(),
-        }]);
-        // Save to DB
-        api('/image/save-media', { method: 'POST', body: { companionId: companion.id, type: 'image', mediaUrl: imageDataUrl, caption: '📸' } }).catch(() => {});
-        refreshUser();
-      } else {
-        alert('Image generation failed. Please try again.');
-      }
-    } catch (err) {
-      clearInterval(interval);
-      if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || 'Image generation failed');
     }
-    setMediaLoading(null);
-    setMediaProgress(0);
-  };
 
+    if (!imageDataUrl && window.puter) {
+      const prompt = `photorealistic fantasy ${gender}, ${desc}, in ${setting}, wearing ${outfit}, ${camera}, professional editorial photography, natural lighting, tasteful, fully clothed`;
+
+      const imgEl = await window.puter.ai.txt2img(prompt, {
+        model: 'gemini-2.5-flash-image-preview',
+      });
+
+      if (imgEl?.src) imageDataUrl = imgEl.src;
+    }
+
+    clearInterval(interval);
+    setMediaProgress(100);
+
+    if (imageDataUrl) {
+      setMessages(p => [...p, {
+        role: 'assistant',
+        type: 'image',
+        content: '📸',
+        media_url: imageDataUrl,
+        created_at: new Date().toISOString(),
+      }]);
+
+      api('/image/save-media', {
+        method: 'POST',
+        body: {
+          companionId: companion.id,
+          type: 'image',
+          mediaUrl: imageDataUrl,
+          caption: '📸'
+        }
+      }).catch(() => {});
+
+      refreshUser();
+    } else {
+      alert('Image generation failed. Please try again.');
+    }
+  } catch (err) {
+    clearInterval(interval);
+    if (err.code === 'NO_TOKENS') onNavigate('pricing');
+    else alert(err.error || err.message || 'Image generation failed');
+  }
+
+  setMediaLoading(null);
+  setMediaProgress(0);
+};
+  
   // ===== Generate Video via Puter.js (Veo 3.1 Lite — FREE) =====
   const handleGenerateVideo = async () => {
-    if (!canUseFeature(user, 'video') && !user?.is_admin) { onNavigate('pricing'); return; }
-    setMediaLoading('video');
-    setMediaProgress(0);
-    const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 5, 85)), 1000);
+  if (!canUseFeature(user, 'video') && !user?.is_admin) {
+    onNavigate('pricing');
+    return;
+  }
 
-    try {
-      await api('/image/deduct-tokens', { method: 'POST', body: { action: 'video_gen', amount: TOKEN_COSTS.video, companionId: companion.id, description: `Video of ${companion.name}` } });
+  try {
+    await ensurePuterAuth();
+  } catch (e) {
+    console.error('Puter auth failed:', e);
+    alert('Please allow the Puter popup and try again.');
+    return;
+  }
 
-      const { setting, outfit } = getRandomScene();
-      const gender = companion.category === 'Guys' ? 'man' : 'woman';
-      const desc = companion.description || companion.personality || '';
-      const prompt = `A ${gender}, ${desc}, in ${setting}, wearing ${outfit}, slight natural movement, soft smile, cinematic lighting, photorealistic, tasteful, fully clothed`;
+  setMediaLoading('video');
+  setMediaProgress(0);
+  const interval = setInterval(() => setMediaProgress(p => Math.min(p + Math.random() * 5, 85)), 1000);
 
-      let videoDataUrl = null;
+  try {
+    await api('/image/deduct-tokens', {
+      method: 'POST',
+      body: {
+        action: 'video_gen',
+        amount: TOKEN_COSTS.video,
+        companionId: companion.id,
+        description: `Video of ${companion.name}`
+      }
+    });
 
-      if (window.puter) {
-        try {
-          const videoEl = await window.puter.ai.txt2vid(prompt, {
-            model: 'google/veo-3.1-lite',
-          });
-          if (videoEl && videoEl.src) {
-            videoDataUrl = videoEl.src;
-          }
-        } catch (e) {
-          console.error('Puter video failed:', e.message);
+    const { setting, outfit } = getRandomScene();
+    const gender = companion.category === 'Guys' ? 'man' : 'woman';
+    const desc = companion.description || companion.personality || '';
+    const prompt = `A ${gender}, ${desc}, in ${setting}, wearing ${outfit}, slight natural movement, soft smile, cinematic lighting, photorealistic, tasteful, fully clothed`;
+
+    let videoDataUrl = null;
+
+    if (window.puter) {
+      try {
+        const videoEl = await window.puter.ai.txt2vid(prompt, {
+          model: 'veo-3.1-lite-generate-preview',
+          seconds: 4,
+        });
+
+        if (videoEl?.src) {
+          videoDataUrl = videoEl.src;
         }
+      } catch (e) {
+        console.error('Puter video failed:', e);
       }
-
-      clearInterval(interval);
-      setMediaProgress(100);
-
-      if (videoDataUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'video', content: '🎬',
-          media_url: videoDataUrl, created_at: new Date().toISOString(),
-        }]);
-        api('/image/save-media', { method: 'POST', body: { companionId: companion.id, type: 'video', mediaUrl: '', caption: '🎬' } }).catch(() => {});
-        refreshUser();
-      } else {
-        alert('Video generation failed. Please try again.');
-      }
-    } catch (err) {
-      clearInterval(interval);
-      if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || 'Video generation failed');
     }
-    setMediaLoading(null);
-    setMediaProgress(0);
-  };
 
+    clearInterval(interval);
+    setMediaProgress(100);
+
+    if (videoDataUrl) {
+      setMessages(p => [...p, {
+        role: 'assistant',
+        type: 'video',
+        content: '🎬',
+        media_url: videoDataUrl,
+        created_at: new Date().toISOString(),
+      }]);
+
+      api('/image/save-media', {
+        method: 'POST',
+        body: {
+          companionId: companion.id,
+          type: 'video',
+          mediaUrl: videoDataUrl,
+          caption: '🎬'
+        }
+      }).catch(() => {});
+
+      refreshUser();
+    } else {
+      alert('Video generation failed. Please try again.');
+    }
+  } catch (err) {
+    clearInterval(interval);
+    if (err.code === 'NO_TOKENS') onNavigate('pricing');
+    else alert(err.error || err.message || 'Video generation failed');
+  }
+
+  setMediaLoading(null);
+  setMediaProgress(0);
+};
+
+  
   const fts = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
