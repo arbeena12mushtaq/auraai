@@ -173,7 +173,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     let provider = null;
 
     if (isPuterReady()) {
-      const puter = getPuter();
+      const puter = await getPuter();
       const avatarBase64 = await avatarToBase64(companion.avatar_url, req);
 
       if (avatarBase64) {
@@ -253,7 +253,7 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     const desc = sanitizePrompt(companion.description || companion.personality || '');
     const prompt = `A ${gender}, ${desc}, in ${setting}, wearing ${outfit}, slight natural movement, soft smile, cinematic lighting, photorealistic, tasteful, fully clothed`;
 
-    const puter = getPuter();
+    const puter = await getPuter();
     const result = await puter.ai.txt2vid(prompt, {
       model: 'veo-3.1-lite-generate-preview',
       seconds: 4,

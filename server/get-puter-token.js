@@ -2,8 +2,8 @@ require('dotenv').config();
 
 (async () => {
   try {
-    const { getAuthToken } = require('@heyputer/puter.js/src/init.cjs');
-    const token = await getAuthToken();
+    const mod = await import('@heyputer/puter.js/src/init.js');
+    const token = await mod.getAuthToken();
     console.log('\nPUTER_AUTH_TOKEN=');
     console.log(token);
     console.log('\nCopy the token above into server/.env as PUTER_AUTH_TOKEN=<token>');
