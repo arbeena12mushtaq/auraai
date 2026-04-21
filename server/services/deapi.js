@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const FormData = require('form-data');
 
 const BASE_URL = (process.env.DEAPI_BASE_URL || 'https://api.deapi.ai').replace(/\/$/, '');
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEAPI_TIMEOUT_MS || 240000);
@@ -12,9 +11,7 @@ const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 
 function getHeaders(extra = {}) {
   const apiKey = process.env.DEAPI_API_KEY;
-  if (!apiKey) {
-    throw new Error('DEAPI_API_KEY is missing');
-  }
+  if (!apiKey) throw new Error('DEAPI_API_KEY is missing');
   return {
     Authorization: `Bearer ${apiKey}`,
     Accept: 'application/json',
@@ -23,7 +20,7 @@ function getHeaders(extra = {}) {
 }
 
 function randomSeed() {
-  return Math.floor(Math.random() * 2147483647);
+  return Math.floor(Math.random() * 2147483647) + 1;
 }
 
 async function fetchJson(url, options = {}) {
@@ -55,11 +52,12 @@ function extractModels(payload) {
 function getInferenceTypes(model) {
   if (Array.isArray(model?.inference_types)) return model.inference_types;
   if (Array.isArray(model?.inferenceTypes)) return model.inferenceTypes;
+  if (typeof model?.type === 'string') return [model.type];
   return [];
 }
 
 function inferMime(filename) {
-  const lower = filename.toLowerCase();
+  const lower = String(filename).toLowerCase();
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.webp')) return 'image/webp';
   if (lower.endsWith('.gif')) return 'image/gif';
@@ -67,23 +65,18 @@ function inferMime(filename) {
 }
 
 function chooseModel(models, task, preferredSlug) {
-  if (preferredSlug) {
-    const exact = models.find(m => m.slug === preferredSlug || m.name === preferredSlug);
-    if (exact) return exact;
-  }
+  if (preferredSlug) return { slug: preferredSlug, name: preferredSlug, info: {} };
 
   const filtered = models.filter(m => getInferenceTypes(m).includes(task));
-  if (!filtered.length) {
-    throw new Error(`No deAPI model available for task: ${task}`);
-  }
+  if (!filtered.length) throw new Error(`No deAPI model available for task: ${task}`);
 
   const preferredNames = {
-    img2img: ['QwenImageEdit', 'Qwen', 'Flux', 'Edit'],
-    img2video: ['Ltx', 'LTX', 'Wan', 'video'],
+    img2img: ['qwenimageedit', 'qwen', 'edit', 'flux'],
+    img2video: ['ltx', 'video', 'wan'],
   };
 
   const byKeyword = (preferredNames[task] || [])
-    .map(keyword => filtered.find(m => String(m.slug || '').toLowerCase().includes(keyword.toLowerCase())))
+    .map(keyword => filtered.find(m => String(m.slug || m.name || '').toLowerCase().includes(keyword.toLowerCase())))
     .find(Boolean);
 
   return byKeyword || filtered[0];
@@ -101,51 +94,48 @@ function deriveParamsFromModel(model, task) {
   const defaults = model?.info?.defaults || {};
   const resolutionStep = Number(limits.resolution_step || 32);
 
-  const width = normalizeDimension(defaults.width || 768, 768, resolutionStep, limits.min_width || 256, limits.max_width || 1536);
-  const height = normalizeDimension(defaults.height || 1024, 1024, resolutionStep, limits.min_height || 256, limits.max_height || 1536);
-
   const base = {
-    width,
-    height,
-    steps: Number(defaults.steps || Math.min(Number(limits.max_steps || 20), 20) || 20),
-    guidance: Number(defaults.guidance || (model?.info?.features?.supports_guidance === false ? 0 : 7.5)),
+    width: normalizeDimension(defaults.width || process.env.DEAPI_WIDTH || 768, 768, resolutionStep, limits.min_width || 256, limits.max_width || 1536),
+    height: normalizeDimension(defaults.height || process.env.DEAPI_HEIGHT || 768, 768, resolutionStep, limits.min_height || 256, limits.max_height || 1536),
+    steps: Number(defaults.steps || process.env.DEAPI_STEPS || 30),
+    guidance: Number(defaults.guidance || process.env.DEAPI_GUIDANCE || 7.5),
     seed: randomSeed(),
   };
 
   if (task === 'img2video') {
-    const maxFrames = Number(limits.max_frames || 49);
-    const maxFps = Number(limits.max_fps || 12);
-    base.frames = Math.min(maxFrames, Number(defaults.frames || 33));
-    base.fps = Math.min(maxFps, Number(defaults.fps || 8));
+    base.frames = Number(defaults.frames || process.env.DEAPI_VIDEO_FRAMES || 96);
+    base.fps = Number(defaults.fps || process.env.DEAPI_VIDEO_FPS || 24);
   }
 
   return base;
 }
 
 async function listModels(forceRefresh = false) {
-  if (!forceRefresh && modelCache && Date.now() - modelCacheAt < MODEL_CACHE_TTL_MS) {
-    return modelCache;
-  }
-
+  if (!forceRefresh && modelCache && Date.now() - modelCacheAt < MODEL_CACHE_TTL_MS) return modelCache;
   const data = await fetchJson(`${BASE_URL}/api/v1/client/models`, {
     method: 'GET',
     headers: getHeaders(),
   });
-
   modelCache = extractModels(data);
   modelCacheAt = Date.now();
   return modelCache;
 }
 
 async function getModel(task, preferredSlug) {
+  if (preferredSlug) return chooseModel([], task, preferredSlug);
   const models = await listModels();
   return chooseModel(models, task, preferredSlug);
+}
+
+async function makeImageBlob(imagePath) {
+  const buffer = await fs.promises.readFile(imagePath);
+  return new Blob([buffer], { type: inferMime(imagePath) });
 }
 
 async function submitMultipart(endpoint, form) {
   const res = await fetch(`${BASE_URL}${endpoint}`, {
     method: 'POST',
-    headers: getHeaders(form.getHeaders()),
+    headers: getHeaders(),
     body: form,
   });
 
@@ -170,13 +160,11 @@ async function submitMultipart(endpoint, form) {
     err.body = data;
     throw err;
   }
-
   return requestId;
 }
 
 async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const started = Date.now();
-
   while (Date.now() - started < timeoutMs) {
     const data = await fetchJson(`${BASE_URL}/api/v1/client/request-status/${requestId}`, {
       method: 'GET',
@@ -184,9 +172,13 @@ async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
     });
 
     const job = data?.data || data || {};
-    const status = job.status;
-    if (status === 'done' && job.result_url) return job.result_url;
-    if (status === 'error') {
+    const status = String(job.status || '').toLowerCase();
+    const resultUrl = job.result_url || job.output_url || job.url || job.data?.result_url;
+
+    if ((status === 'done' || status === 'completed' || status === 'success') && resultUrl) {
+      return resultUrl;
+    }
+    if (status === 'error' || status === 'failed') {
       const err = new Error('deAPI job failed');
       err.body = job;
       throw err;
@@ -194,7 +186,6 @@ async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-
   throw new Error('deAPI polling timed out');
 }
 
@@ -207,52 +198,67 @@ async function downloadToBuffer(url) {
   };
 }
 
-async function img2img({ imagePath, prompt, negativePrompt }) {
+async function img2img({ imagePath, prompt, negativePrompt, seed }) {
+  if (!imagePath || !fs.existsSync(imagePath)) throw new Error('img2img imagePath is missing');
+  if (!prompt || !String(prompt).trim()) throw new Error('img2img prompt is missing');
+
   const model = await getModel('img2img', process.env.DEAPI_IMG2IMG_MODEL);
   const params = deriveParamsFromModel(model, 'img2img');
+  const finalSeed = Number(seed || params.seed || randomSeed());
+  const finalModel = model.slug || model.name;
   const form = new FormData();
 
-  form.append('prompt', prompt);
-  form.append('model', model.slug || model.name);
+  form.append('image', await makeImageBlob(imagePath), path.basename(imagePath));
+  form.append('prompt', String(prompt));
+  form.append('model', String(finalModel));
   form.append('steps', String(params.steps));
-  form.append('seed', String(params.seed));
+  form.append('seed', String(finalSeed));
   form.append('guidance', String(params.guidance));
-  form.append('width', String(params.width));
-  form.append('height', String(params.height));
-  if (negativePrompt) form.append('negative_prompt', negativePrompt);
-  form.append('image', fs.createReadStream(imagePath), {
-    filename: path.basename(imagePath),
-    contentType: inferMime(imagePath),
-  });
+  if (negativePrompt) form.append('negative_prompt', String(negativePrompt));
+
+  console.log('deAPI img2img request:', { model: finalModel, seed: finalSeed, hasPrompt: true });
 
   const requestId = await submitMultipart('/api/v1/client/img2img', form);
   const resultUrl = await waitForResult(requestId, Number(process.env.DEAPI_IMAGE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
   return {
     ...(await downloadToBuffer(resultUrl)),
     resultUrl,
-    model: model.slug || model.name,
+    model: finalModel,
     requestId,
+    seed: finalSeed,
   };
 }
 
-async function img2video({ imagePath, prompt, negativePrompt }) {
+async function img2video({ imagePath, prompt, negativePrompt, seed }) {
+  if (!imagePath || !fs.existsSync(imagePath)) throw new Error('img2video imagePath is missing');
+  if (!prompt || !String(prompt).trim()) throw new Error('img2video prompt is missing');
+
   const model = await getModel('img2video', process.env.DEAPI_IMG2VIDEO_MODEL);
   const params = deriveParamsFromModel(model, 'img2video');
+  const finalSeed = Number(seed || params.seed || randomSeed());
+  const finalModel = model.slug || model.name;
   const form = new FormData();
 
-  form.append('prompt', prompt);
-  form.append('model', model.slug || model.name);
-  form.append('steps', String(params.steps));
-  form.append('seed', String(params.seed));
-  form.append('guidance', String(params.guidance));
+  form.append('first_frame_image', await makeImageBlob(imagePath), path.basename(imagePath));
+  form.append('prompt', String(prompt));
+  form.append('model', String(finalModel));
   form.append('width', String(params.width));
   form.append('height', String(params.height));
+  form.append('guidance', String(params.guidance));
+  form.append('steps', String(params.steps));
   form.append('frames', String(params.frames));
+  form.append('seed', String(finalSeed));
   form.append('fps', String(params.fps));
-  if (negativePrompt) form.append('negative_prompt', negativePrompt);
-  form.append('first_frame_image', fs.createReadStream(imagePath), {
-    filename: path.basename(imagePath),
-    contentType: inferMime(imagePath),
+  if (negativePrompt) form.append('negative_prompt', String(negativePrompt));
+
+  console.log('deAPI img2video request:', {
+    model: finalModel,
+    seed: finalSeed,
+    width: params.width,
+    height: params.height,
+    frames: params.frames,
+    fps: params.fps,
+    hasPrompt: true,
   });
 
   const requestId = await submitMultipart('/api/v1/client/img2video', form);
@@ -260,8 +266,9 @@ async function img2video({ imagePath, prompt, negativePrompt }) {
   return {
     ...(await downloadToBuffer(resultUrl)),
     resultUrl,
-    model: model.slug || model.name,
+    model: finalModel,
     requestId,
+    seed: finalSeed,
   };
 }
 
