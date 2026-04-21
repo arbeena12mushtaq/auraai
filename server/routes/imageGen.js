@@ -84,27 +84,54 @@ function getRandomFantasyScene() {
 }
 
 async function generateWithPollinations(prompt, width = 1024, height = 1024) {
-  try {
-    const seed = Math.floor(Math.random() * 999999);
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
-    console.log(`🌸 Pollinations avatar (seed:${seed})...`);
+  const attempts = Number(process.env.POLLINATIONS_RETRIES || 3);
+  const timeoutMs = Number(process.env.POLLINATIONS_TIMEOUT_MS || 45000);
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.error('Pollinations failed:', res.status);
-      return null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const seed = Math.floor(Math.random() * 999999);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
+      console.log(`🌸 Pollinations avatar attempt ${attempt}/${attempts} (seed:${seed})...`);
+
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'accept': 'image/*,*/*;q=0.8',
+          'user-agent': 'AuraAI/1.0',
+        },
+      });
+
+      if (!res.ok) {
+        const bodyText = await res.text().catch(() => '');
+        console.error(`Pollinations failed on attempt ${attempt}:`, res.status, bodyText.slice(0, 200));
+      } else {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('image')) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          if (buffer.length >= 3000) {
+            clearTimeout(timer);
+            return buffer;
+          }
+          console.error(`Pollinations returned too-small image on attempt ${attempt}:`, buffer.length);
+        } else {
+          const bodyText = await res.text().catch(() => '');
+          console.error(`Pollinations returned non-image on attempt ${attempt}:`, contentType, bodyText.slice(0, 200));
+        }
+      }
+    } catch (err) {
+      console.error(`Pollinations error on attempt ${attempt}:`, err.message);
+    } finally {
+      clearTimeout(timer);
     }
 
-    const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('image')) return null;
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.length < 3000) return null;
-    return buffer;
-  } catch (err) {
-    console.error('Pollinations error:', err.message);
-    return null;
+    if (attempt < attempts) {
+      await new Promise(resolve => setTimeout(resolve, 1200 * attempt));
+    }
   }
+
+  return null;
 }
 
 function saveBuffer(prefix, buffer, ext = '.png') {
@@ -178,7 +205,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     const imageBuffer = await generateWithPollinations(prompt);
     if (!imageBuffer) {
-      return res.status(500).json({ error: 'Avatar generation failed. Try again or upload manually.' });
+      return res.status(503).json({ error: 'Avatar generation provider is temporarily unavailable. Please try again in a moment.' });
     }
 
     const avatarUrl = saveBuffer('gen', imageBuffer, '.png');
@@ -230,9 +257,9 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
-    console.error('Scene error:', err?.body || err);
+    console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
-    return res.status(500).json({ error: 'Fantasy image generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.message || 'Fantasy image generation failed' });
   }
 });
 
@@ -292,9 +319,9 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     }
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
-    console.error('Video error:', err?.body || err);
+    console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json({ error: 'Fantasy video generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.message || 'Fantasy video generation failed' });
   }
 });
 

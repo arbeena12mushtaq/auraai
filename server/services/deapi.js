@@ -165,7 +165,9 @@ async function submitMultipart(endpoint, form) {
 
 async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const started = Date.now();
+  let attempt = 0;
   while (Date.now() - started < timeoutMs) {
+    attempt += 1;
     const data = await fetchJson(`${BASE_URL}/api/v1/client/request-status/${requestId}`, {
       method: 'GET',
       headers: getHeaders(),
@@ -173,9 +175,18 @@ async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
     const job = data?.data || data || {};
     const status = String(job.status || '').toLowerCase();
-    const resultUrl = job.result_url || job.output_url || job.url || job.data?.result_url;
+    const resultUrl = job.result_url || job.output_url || job.url || job.result?.url || job.data?.result_url;
 
-    if ((status === 'done' || status === 'completed' || status === 'success') && resultUrl) {
+    console.log('deAPI poll:', {
+      requestId,
+      attempt,
+      status,
+      progress: job.progress,
+      hasResultUrl: Boolean(resultUrl),
+      elapsedMs: Date.now() - started,
+    });
+
+    if (resultUrl) {
       return resultUrl;
     }
     if (status === 'error' || status === 'failed') {
@@ -186,7 +197,9 @@ async function waitForResult(requestId, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  throw new Error('deAPI polling timed out');
+  const err = new Error('deAPI polling timed out');
+  err.body = { requestId };
+  throw err;
 }
 
 async function downloadToBuffer(url) {
@@ -219,7 +232,9 @@ async function img2img({ imagePath, prompt, negativePrompt, seed }) {
   console.log('deAPI img2img request:', { model: finalModel, seed: finalSeed, hasPrompt: true });
 
   const requestId = await submitMultipart('/api/v1/client/img2img', form);
+  console.log('deAPI img2img submitted:', { requestId, model: finalModel });
   const resultUrl = await waitForResult(requestId, Number(process.env.DEAPI_IMAGE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS));
+  console.log('deAPI img2img result:', { requestId, resultUrl });
   return {
     ...(await downloadToBuffer(resultUrl)),
     resultUrl,
@@ -262,7 +277,9 @@ async function img2video({ imagePath, prompt, negativePrompt, seed }) {
   });
 
   const requestId = await submitMultipart('/api/v1/client/img2video', form);
+  console.log('deAPI img2video submitted:', { requestId, model: finalModel });
   const resultUrl = await waitForResult(requestId, Number(process.env.DEAPI_VIDEO_TIMEOUT_MS || 420000));
+  console.log('deAPI img2video result:', { requestId, resultUrl });
   return {
     ...(await downloadToBuffer(resultUrl)),
     resultUrl,
