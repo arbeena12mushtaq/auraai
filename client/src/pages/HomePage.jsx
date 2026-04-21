@@ -73,8 +73,8 @@ export default function HomePage({ onNavigate, onChat, onToggleSave, collection,
             </div>
           </div>
 
-          {/* RIGHT — Large character image grid (desktop only) */}
-          <div className="hero-desktop" style={{ flex:'1 1 420px', maxWidth:600, display:'flex', gap:10, justifyContent:'center', alignItems:'flex-end', perspective:800 }}>
+          {/* RIGHT — Large character image grid (candy.ai style) */}
+          <div style={{ flex:'1 1 420px', maxWidth:600, display:'flex', gap:10, justifyContent:'center', alignItems:'flex-end', perspective:800 }}>
             {hero.slice(0,4).map((c,i)=>{
               const heights = [230,270,250,220];
               const offsets = [15,0,8,20];

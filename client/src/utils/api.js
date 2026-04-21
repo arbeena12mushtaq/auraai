@@ -91,12 +91,10 @@ export function getUserTokens(user) {
 export function canUseFeature(user, feature) {
   if (!user) return false;
   if (user.is_admin) return true;
-  
-  // Check if user has enough tokens (works for any user with tokens, plan or not)
-  const tokens = user.tokens || 0;
-  if (feature === 'image') return tokens >= TOKEN_COSTS.image;
-  if (feature === 'video') return tokens >= TOKEN_COSTS.video;
-  if (feature === 'voice') return tokens >= TOKEN_COSTS.voice;
-  
+  const plan = getPlanInfo(user.plan);
+  if (!plan) return false;
+  if (feature === 'image') return plan.images && (user.tokens || 0) >= TOKEN_COSTS.image;
+  if (feature === 'video') return plan.videos && (user.tokens || 0) >= TOKEN_COSTS.video;
+  if (feature === 'voice') return plan.voice && (user.tokens || 0) >= TOKEN_COSTS.voice;
   return false;
 }
