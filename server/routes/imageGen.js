@@ -225,16 +225,26 @@ function extFromContentType(contentType, fallback = '.bin') {
 }
 
 
-function toAbsolutePublicUrl(relativeOrAbsolute) {
+function toAbsolutePublicUrl(relativeOrAbsolute, req = null) {
   if (!relativeOrAbsolute) return null;
   if (/^https?:\/\//i.test(relativeOrAbsolute)) return relativeOrAbsolute;
-  const publicBase = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
+  const envBase = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
+  const reqBase = req ? `${req.protocol}://${req.get('host')}`.replace(/\/$/, '') : '';
+  const publicBase = envBase || reqBase;
   if (!publicBase) return null;
   return `${publicBase}${relativeOrAbsolute.startsWith('/') ? '' : '/'}${relativeOrAbsolute}`;
 }
 
-async function createSceneFromAvatar(companion, userPrompt = '') {
-  const avatarUrl = toAbsolutePublicUrl(companion.avatar_url);
+function safeErrorPayload(err) {
+  return {
+    error: err?.body?.message || err?.body?.error || err?.message || 'Unknown error',
+    status: err?.status || 500,
+    details: err?.body || null,
+  };
+}
+
+async function createSceneFromAvatar(companion, userPrompt = '', req = null) {
+  const avatarUrl = toAbsolutePublicUrl(companion.avatar_url, req);
   if (!avatarUrl) {
     throw new Error('Companion avatar is missing or PUBLIC_BASE_URL / APP_BASE_URL is not configured.');
   }
@@ -286,7 +296,8 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
 
     await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
 
-    const { scene, result } = await createSceneFromAvatar(companion, userPrompt);
+    const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt, req);
+    console.log('🖼️ Scene source avatar URL:', avatarUrl);
     const imageUrl = saveBuffer('scene', result.buffer, '.png');
 
     await pool.query(
@@ -306,7 +317,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.body?.error || err?.message || 'Realistic image generation failed' });
+    return res.status(500).json(safeErrorPayload(err));
   }
 });
 
@@ -320,17 +331,18 @@ async function generateFlirtyVideo(req, res) {
 
   await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Talking realistic video of ${companion.name}`);
 
-  const { scene, result: sceneResult } = await createSceneFromAvatar(companion, userPrompt);
+  const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt, req);
+  console.log('🎞️ Video source avatar URL:', avatarUrl);
   const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
   fs.writeFileSync(tempScenePath, sceneResult.buffer);
 
   try {
     const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
-    const publicBase = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
-    if (!publicBase) {
-      throw new Error('PUBLIC_BASE_URL or APP_BASE_URL is required for Pixazo video generation');
+    const absoluteSceneUrl = toAbsolutePublicUrl(sceneImageUrl, req);
+    if (!absoluteSceneUrl) {
+      throw new Error('Could not build a public scene image URL for video generation');
     }
-    const absoluteSceneUrl = `${publicBase}${sceneImageUrl}`;
+    console.log('🎞️ Runway scene image URL:', absoluteSceneUrl);
 
     const videoResult = await imageToVideo({
       imageUrl: absoluteSceneUrl,
@@ -369,7 +381,7 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.body?.error || err?.message || 'Realistic video generation failed' });
+    return res.status(500).json(safeErrorPayload(err));
   }
 });
 
