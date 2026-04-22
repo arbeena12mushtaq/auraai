@@ -142,18 +142,23 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     }
   };
 
-  const recoverLatestMediaMessage = async (expectedType) => {
-    try {
-      const d = await api(`/chat/${companion.id}`);
-      const latest = [...(d.messages || [])]
-        .reverse()
-        .find(m => m.role === 'assistant' && m.type === expectedType && m.media_url);
-      if (!latest) return null;
-      setMessages(d.messages || []);
-      return latest;
-    } catch {
-      return null;
+  const recoverLatestMediaMessage = async (expectedType, attempts = 8, delayMs = 1500) => {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const d = await api(`/chat/${companion.id}`);
+        const latest = [...(d.messages || [])]
+          .reverse()
+          .find(m => m.role === 'assistant' && m.type === expectedType && m.media_url);
+        if (latest) {
+          setMessages(d.messages || []);
+          return latest;
+        }
+      } catch (err) {
+        console.warn(`recoverLatestMediaMessage attempt ${i + 1} failed`, err);
+      }
+      await new Promise(r => setTimeout(r, delayMs));
     }
+    return null;
   };
 
   // ===== Generate Image =====
@@ -197,9 +202,9 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
       if (err.code === 'NO_TOKENS') {
         onNavigate('pricing');
       } else {
-        const recovered = await recoverLatestMediaMessage('image');
+        const recovered = await recoverLatestMediaMessage('image', 12, 2000);
         if (!recovered) {
-          alert(err.error || err.details?.error || 'Image generation failed');
+          alert(err.error || err.details?.error || 'Image request timed out or connection dropped. If the image was generated, it should appear in chat shortly.');
         }
       }
     }
@@ -256,7 +261,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         const recoveredVideo = await recoverLatestMediaMessage('video');
         const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image');
         if (!recoveredVideo && !recoveredImage) {
-          alert(err.error || err.details?.error || 'Video generation failed');
+          alert(err.error || err.details?.error || 'Video request timed out or connection dropped. If the video was generated, it should appear in chat shortly.');
         }
       }
     }
