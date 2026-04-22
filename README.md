@@ -237,28 +237,3 @@ aura-ai/
 ## License
 
 MIT — Free for commercial use.
-
-
-## Pixazo setup
-
-Add these environment variables for the updated image/video pipeline:
-
-```env
-PIXAZO_API_KEY=your_pixazo_key
-PUBLIC_BASE_URL=https://your-public-domain.com
-# Optional overrides if your Pixazo account uses custom endpoints
-PIXAZO_BASE_URL=https://api.pixazo.ai
-PIXAZO_IMAGE_ENDPOINT=/v1/image-to-image/nano-banana
-PIXAZO_VIDEO_ENDPOINT=/v1/video/generate
-PIXAZO_IMAGE_MODEL=nano-banana-pro-async-api
-PIXAZO_VIDEO_MODEL=veo-3-1-fast
-PIXAZO_VIDEO_DURATION=5
-PIXAZO_VIDEO_ASPECT_RATIO=16:9
-PIXAZO_VIDEO_FPS=24
-```
-
-Notes:
-- Avatar generation still uses Pollinations.
-- Scene generation now uses Pixazo Nano Banana image-to-image.
-- Video generation now uses Pixazo Veo with in-video audio enabled.
-- `PUBLIC_BASE_URL` must be publicly reachable so Pixazo can fetch the generated scene image for video creation.

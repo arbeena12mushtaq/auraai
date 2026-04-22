@@ -46,26 +46,37 @@ function sanitizePrompt(text) {
 
 function getRandomRealisticScene() {
   const scenes = [
-    { setting: 'luxury bedroom with warm lamp light and elegant decor', outfit: 'stylish fitted evening dress with glamorous styling' },
-    { setting: 'cozy coffee shop by the window with golden hour light', outfit: 'chic body-skimming dress with a modern fashionable look' },
-    { setting: 'modern apartment living room with soft daylight', outfit: 'sleek fitted lounge set styled in a polished attractive way' },
-    { setting: 'rooftop lounge with city lights at night', outfit: 'black cocktail dress with bold elegant fashion styling' },
-    { setting: 'ocean-view balcony at sunset with warm breeze', outfit: 'luxury resort outfit with refined glamorous styling' },
-    { setting: 'high-end restaurant with candlelight ambiance', outfit: 'elegant satin dress with sophisticated evening styling' },
+    { setting: 'cozy coffee shop, warm lighting, sitting by window', outfit: 'elegant mini dress, stylish modern look' },
+    { setting: 'beach during golden hour, ocean behind', outfit: 'luxury beachwear, flowing wrap, modern fashion look' },
+    { setting: 'modern apartment, soft daylight, on sofa', outfit: 'silky fitted loungewear, chic and attractive' },
+    { setting: 'rooftop restaurant, city lights, night', outfit: 'sleek black cocktail dress, bold and glamorous' },
+    { setting: 'garden with flowers, soft sunlight', outfit: 'light romantic dress, feminine and elegant' },
+    { setting: 'park in autumn, golden leaves', outfit: 'form-fitting leather jacket and stylish skirt, confident fashion look' },
+    { setting: 'bedroom, morning sunlight through curtains', outfit: 'luxury satin robe over stylish sleepwear' },
+    { setting: 'cobblestone street at sunset, European city', outfit: 'fitted designer dress, fashionable and captivating' },
+    { setting: 'swimming pool area, sunny day', outfit: 'luxury resort wear, glamorous and confident' },
+    { setting: 'kitchen cooking, natural window light', outfit: 'cute fitted apron over stylish dress' },
+    { setting: 'balcony overlooking ocean, soft evening light', outfit: 'off-shoulder fitted top and sleek skirt, elegant fashion style' },
+    { setting: 'luxury car interior, leather seats', outfit: 'bold high-fashion outfit, fitted blazer with glamorous styling' },
   ];
 
   const cameras = [
-    'medium close-up, eye-level framing, shallow depth of field, looking into camera',
-    'selfie-style framing, slight high angle, natural phone-camera perspective',
-    'waist-up portrait, slight 3/4 angle, cinematic depth of field',
-    'close-up portrait, subtle side angle, soft focus background, intimate framing',
+    'close-up portrait, face filling frame, shallow depth of field, looking at camera',
+    'medium shot from chest up, 3/4 angle view, natural pose',
+    'selfie angle, phone held at arm length, slightly above eye level, front facing',
+    'candid side profile, natural moment, soft focus background',
+    'sitting pose, shot from slightly above, relaxed and natural',
+    'leaning against wall, upper body focus, casual cool pose',
+    'close-up selfie, slightly tilted head, warm expression',
+    'waist-up portrait, eye level camera, realistic photography',
   ];
 
   const moods = [
-    'playful and charming',
     'confident and flirty',
-    'warm and teasing',
-    'soft and inviting',
+    'warm and charming',
+    'casual and stylish',
+    'playful and inviting',
+    'soft and romantic',
   ];
 
   const scene = scenes[Math.floor(Math.random() * scenes.length)];
@@ -172,15 +183,15 @@ function scenePromptForCompanion(companion, scene, userPrompt = '') {
   const extra = sanitizePrompt(userPrompt || '');
 
   return [
-    `Use the uploaded avatar as the identity anchor for ${character}.`,
-    'Keep the same face, hairstyle, skin tone, facial proportions, and overall identity exactly consistent with the source avatar.',
-    `Background: ${scene.setting}.`,
-    `Wardrobe: ${scene.outfit}.`,
+    `Keep the same woman and exact identity from the source avatar of ${character}.`,
+    'Preserve the same face, eyes, lips, nose, skin tone, hairstyle, and expression as closely as possible.',
+    `Place her in this realistic scene: ${scene.setting}.`,
+    `Outfit: ${scene.outfit}.`,
     `Camera framing: ${scene.camera}.`,
     `Mood: ${scene.mood}.`,
-    extra ? `Additional styling request: ${extra}.` : '',
-    'Style: photorealistic, natural skin texture, cinematic lighting, realistic smartphone or DSLR portrait photography, modern lifestyle aesthetic.',
-    'Important rules: adult-looking subject only, fully clothed, no nudity, no fantasy effects, no text, no watermark.',
+    extra ? `Additional request: ${extra}.` : '',
+    'Style: photorealistic, realistic lighting, natural skin texture, modern lifestyle photography, high detail.',
+    'Important rules: do not turn it into fantasy art, do not add wings, throne, castle, crown, armor, or magical effects, keep it fully clothed, no text, no watermark.',
   ].filter(Boolean).join(' ');
 }
 
@@ -201,6 +212,7 @@ function flirtyVideoPromptForCompanion(companion, scene, actionPrompt = '') {
   ].join(' ');
 }
 
+
 function extFromContentType(contentType, fallback = '.bin') {
   const type = String(contentType || '').toLowerCase();
   if (type.includes('mpeg') || type.includes('mp3')) return '.mp3';
@@ -211,6 +223,7 @@ function extFromContentType(contentType, fallback = '.bin') {
   if (type.includes('png')) return '.png';
   return fallback;
 }
+
 
 async function createSceneFromAvatar(companion, userPrompt = '') {
   const avatarPath = publicUrlToLocalPath(companion.avatar_url);
@@ -297,18 +310,19 @@ async function generateFlirtyVideo(req, res) {
   if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
   const companion = comp.rows[0];
 
-  await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Flirty talking video of ${companion.name}`);
+  await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Talking realistic video of ${companion.name}`);
 
   const { scene, result: sceneResult } = await createSceneFromAvatar(companion, userPrompt);
   const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
   fs.writeFileSync(tempScenePath, sceneResult.buffer);
 
   try {
-    const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
-    if (!publicBaseUrl) throw new Error('PUBLIC_BASE_URL or APP_BASE_URL is required for Pixazo video generation');
-
     const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
-    const absoluteSceneUrl = `${publicBaseUrl}${sceneImageUrl}`;
+    const publicBase = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
+    if (!publicBase) {
+      throw new Error('PUBLIC_BASE_URL or APP_BASE_URL is required for Pixazo video generation');
+    }
+    const absoluteSceneUrl = `${publicBase}${sceneImageUrl}`;
 
     const videoResult = await imageToVideo({
       imageUrl: absoluteSceneUrl,
@@ -330,7 +344,7 @@ async function generateFlirtyVideo(req, res) {
       video_model: videoResult.model,
       image_model: sceneResult.model,
       scene,
-      mode: 'flirty_talking_video',
+      mode: 'talking_flirty',
       has_audio: true,
       music: false,
     });
@@ -347,7 +361,7 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.message || 'Talking video generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.message || 'Realistic video generation failed' });
   }
 });
 
