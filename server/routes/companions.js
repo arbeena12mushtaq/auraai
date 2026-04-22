@@ -7,6 +7,33 @@ const { authMiddleware, contentFilter } = require('../middleware/auth');
 
 const router = express.Router();
 
+
+function getBaseUrl(req) {
+  return (
+    process.env.PUBLIC_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    `${req.protocol}://${req.get('host')}`
+  ).replace(/\/$/, '');
+}
+
+function normalizeAvatarUrl(url, req) {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('data:')) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/')) return `${getBaseUrl(req)}${trimmed}`;
+  return `${getBaseUrl(req)}/${trimmed.replace(/^\/+/, '')}`;
+}
+
+function fileToDataUri(file) {
+  if (!file || !file.path) return null;
+  const mime = file.mimetype || 'application/octet-stream';
+  const base64 = fs.readFileSync(file.path).toString('base64');
+  return `data:${mime};base64,${base64}`;
+}
+
+
 // Setup multer for avatar uploads
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -68,17 +95,6 @@ router.get('/discover', async (req, res) => {
 
     const result = await pool.query(query, params);
     res.json({ companions: result.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Get single companion
-router.get('/:id', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM companions WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
-    res.json({ companion: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -150,6 +166,18 @@ router.get('/user/mine', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Get single companion
+router.get('/:id', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM companions WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Companion not found' });
+    res.json({ companion: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 // Delete companion
 router.delete('/:id', authMiddleware, async (req, res) => {
