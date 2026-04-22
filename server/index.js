@@ -33,7 +33,9 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath, { fallthrough: false }));
+app.use('/uploads', (req, res) => res.status(404).json({ error: 'Upload not found' }));
 
 // API Routes
 app.use('/api/auth', require('./routes/auth'));

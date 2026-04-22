@@ -106,8 +106,8 @@ async function generateWithPollinations(prompt, width = 1024, height = 1024) {
     const seed = Math.floor(Math.random() * 999999);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
     try {
-      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
       console.log(`🌸 Pollinations avatar attempt ${attempt}/${attempts} (seed:${seed})...`);
 
       const res = await fetch(url, {
@@ -127,7 +127,7 @@ async function generateWithPollinations(prompt, width = 1024, height = 1024) {
           const buffer = Buffer.from(await res.arrayBuffer());
           if (buffer.length >= 3000) {
             clearTimeout(timer);
-            return buffer;
+            return { buffer, sourceUrl: url, seed, contentType };
           }
           console.error(`Pollinations returned too-small image on attempt ${attempt}:`, buffer.length);
         } else {
@@ -296,8 +296,11 @@ router.post('/generate', authMiddleware, async (req, res) => {
       return res.status(503).json({ error: 'Avatar generation provider is temporarily unavailable. Please try again in a moment.' });
     }
 
-    const avatarUrl = saveBuffer('gen', imageBuffer, '.png');
-    return res.json({ avatar_url: avatarUrl, provider: 'pollinations' });
+    const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
+    const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+    console.log('✅ Generated avatar preview URL:', absolutePreviewUrl);
+    console.log('✅ Generated avatar source URL:', imageBuffer.sourceUrl);
+    return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
   } catch (err) {
     console.error('Avatar error:', err);
     return res.status(500).json({ error: 'Failed to generate avatar' });
@@ -318,21 +321,27 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
     console.log('🖼️ Scene source avatar URL:', avatarUrl);
     console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
-    const imageUrl = saveBuffer('scene', result.buffer, '.png');
-    const publicImageUrl = toAbsolutePublicUrl(imageUrl, req) || imageUrl;
-    console.log('🖼️ Saved scene image path:', imageUrl);
-    console.log('🖼️ Saved scene public URL:', publicImageUrl);
-    const savedProbe = await checkPublicImageUrl(publicImageUrl);
+    const cachedImagePath = saveBuffer('scene', result.buffer, '.png');
+    const cachedPublicImageUrl = toAbsolutePublicUrl(cachedImagePath, req) || cachedImagePath;
+    const persistentImageUrl = result?.sourceUrl || cachedPublicImageUrl;
+    console.log('🖼️ Saved scene image path:', cachedImagePath);
+    console.log('🖼️ Saved scene public URL:', cachedPublicImageUrl);
+    console.log('🖼️ Persistent scene URL:', persistentImageUrl);
+    const savedProbe = await checkPublicImageUrl(cachedPublicImageUrl);
     console.log('🧪 Saved scene URL probe:', savedProbe);
 
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', publicImageUrl]
+      [req.user.id, companionId, '📸', persistentImageUrl]
     );
 
     const payload = {
-      image_url: publicImageUrl,
-      image_path: imageUrl,
+      success: true,
+      image_url: persistentImageUrl,
+      imageUrl: persistentImageUrl,
+      image_path: cachedImagePath,
+      imagePath: cachedImagePath,
+      cached_image_url: cachedPublicImageUrl,
       caption: '📸',
       provider: 'pixazo-runway',
       model: result.model,
@@ -377,19 +386,23 @@ async function generateFlirtyVideo(req, res) {
       prompt: flirtyVideoPromptForCompanion(companion, scene, actionPrompt),
     });
 
-    const videoUrl = saveBuffer('video', videoResult.buffer, '.mp4');
-    const publicVideoUrl = toAbsolutePublicUrl(videoUrl, req) || videoUrl;
-    console.log('🎞️ Saved video path:', videoUrl);
-    console.log('🎞️ Saved video public URL:', publicVideoUrl);
+    const cachedVideoPath = saveBuffer('video', videoResult.buffer, '.mp4');
+    const cachedPublicVideoUrl = toAbsolutePublicUrl(cachedVideoPath, req) || cachedVideoPath;
+    const persistentVideoUrl = videoResult?.sourceUrl || cachedPublicVideoUrl;
+    console.log('🎞️ Saved video path:', cachedVideoPath);
+    console.log('🎞️ Saved video public URL:', cachedPublicVideoUrl);
+    console.log('🎞️ Persistent video URL:', persistentVideoUrl);
 
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
-      [req.user.id, companionId, '🎬', publicVideoUrl]
+      [req.user.id, companionId, '🎬', persistentVideoUrl]
     );
 
     const payload = {
-      video_url: publicVideoUrl,
-      video_path: videoUrl,
+      success: true,
+      video_url: persistentVideoUrl,
+      videoUrl: persistentVideoUrl,
+      video_path: cachedVideoPath,
       scene_image_url: absoluteSceneUrl,
       scene_image_path: sceneImageUrl,
       caption: '🎬',

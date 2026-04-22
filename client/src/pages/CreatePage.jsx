@@ -65,9 +65,11 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           description: form.description,
         },
       });
-      if (data.avatar_url) {
-        set('generatedAvatarUrl', data.avatar_url);
-        set('avatarPreview', data.avatar_url);
+      const previewUrl = data.avatar_preview_url || data.avatar_url;
+      const sourceUrl = data.avatar_source_url || data.avatar_url;
+      if (previewUrl || sourceUrl) {
+        set('generatedAvatarUrl', sourceUrl);
+        set('avatarPreview', previewUrl || sourceUrl);
         set('avatarFile', null);
         set('avatarSeed', data.seed || 0);
       }

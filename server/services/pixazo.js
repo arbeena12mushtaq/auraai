@@ -171,14 +171,14 @@ async function imageToImage({ imageUrl, prompt }) {
   if (dataUri) {
     const decoded = decodeDataUri(dataUri);
     if (decoded?.buffer?.length) {
-      return { ...decoded, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
+      return { ...decoded, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: null };
     }
   }
 
   const immediateMediaUrl = extractMediaUrl(payload);
   if (immediateMediaUrl && !payload?.request_id) {
     const file = await downloadToBuffer(immediateMediaUrl);
-    return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
+    return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: immediateMediaUrl };
   }
 
   const requestId = payload?.request_id;
@@ -189,7 +189,7 @@ async function imageToImage({ imageUrl, prompt }) {
   }
   const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
   const file = await downloadToBuffer(mediaUrl);
-  return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
+  return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: mediaUrl };
 }
 
 async function imageToVideo({ imageUrl, prompt }) {
@@ -215,7 +215,7 @@ async function imageToVideo({ imageUrl, prompt }) {
   }
   const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
   const file = await downloadToBuffer(mediaUrl);
-  return { ...file, payload, model: 'runway-gen-4-5', endpoint: DEFAULT_VIDEO_ENDPOINT };
+  return { ...file, payload, model: 'runway-gen-4-5', endpoint: DEFAULT_VIDEO_ENDPOINT, sourceUrl: mediaUrl };
 }
 
 module.exports = { imageToImage, imageToVideo };

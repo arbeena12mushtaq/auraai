@@ -112,9 +112,11 @@ router.post('/', authMiddleware, upload.single('avatar'), async (req, res) => {
     let avatar_url = null;
     let avatar_seed = parseInt(req.body.avatar_seed) || 0;
     if (req.file) {
-      avatar_url = `/uploads/${req.file.filename}`;
+      avatar_url = fileToDataUri(req.file);
+      console.log('🧑‍🎨 Stored uploaded avatar as data URI for persistence');
     } else if (req.body.generated_avatar_url) {
-      avatar_url = req.body.generated_avatar_url;
+      avatar_url = normalizeAvatarUrl(req.body.generated_avatar_url, req);
+      console.log('🧑‍🎨 Stored generated avatar URL:', avatar_url);
     }
 
     const parsedHobbies = hobbies ? (typeof hobbies === 'string' ? JSON.parse(hobbies) : hobbies) : [];

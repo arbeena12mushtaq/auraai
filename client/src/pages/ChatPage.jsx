@@ -142,6 +142,20 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     }
   };
 
+  const recoverLatestMediaMessage = async (expectedType) => {
+    try {
+      const d = await api(`/chat/${companion.id}`);
+      const latest = [...(d.messages || [])]
+        .reverse()
+        .find(m => m.role === 'assistant' && m.type === expectedType && m.media_url);
+      if (!latest) return null;
+      setMessages(d.messages || []);
+      return latest;
+    } catch {
+      return null;
+    }
+  };
+
   // ===== Generate Image =====
   const handleGenerateImage = async () => {
     if (!canUseFeature(user, 'image') && !user?.is_admin) {
@@ -168,17 +182,26 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
       clearInterval(interval);
       setMediaProgress(100);
 
-      if (d.image_url) {
+      const imageUrl = d.image_url || d.imageUrl || d.media_url || d.url || d.cached_image_url || d?.message?.media_url;
+      if (imageUrl) {
         setMessages(p => [...p, {
           role: 'assistant', type: 'image', content: d.caption || '📸',
-          media_url: d.image_url, created_at: new Date().toISOString(),
+          media_url: imageUrl, created_at: new Date().toISOString(),
         }]);
         refreshUser();
+      } else {
+        throw { error: 'Image generated but no image URL was returned' };
       }
     } catch (err) {
       clearInterval(interval);
-      if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || err.details?.error || 'Image generation failed');
+      if (err.code === 'NO_TOKENS') {
+        onNavigate('pricing');
+      } else {
+        const recovered = await recoverLatestMediaMessage('image');
+        if (!recovered) {
+          alert(err.error || err.details?.error || 'Image generation failed');
+        }
+      }
     }
 
     setMediaLoading(null);
@@ -211,23 +234,31 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
       clearInterval(interval);
       setMediaProgress(100);
 
-      if (d.video_url) {
+      const videoUrl = d.video_url || d.videoUrl || d.media_url || d.url;
+      const imageUrl = d.image_url || d.imageUrl || d.cached_image_url;
+      if (videoUrl) {
         setMessages(p => [...p, {
           role: 'assistant', type: 'video', content: d.caption || '🎬',
-          media_url: d.video_url, created_at: new Date().toISOString(),
+          media_url: videoUrl, created_at: new Date().toISOString(),
         }]);
         refreshUser();
-      } else if (d.image_url) {
+      } else if (imageUrl) {
         setMessages(p => [...p, {
           role: 'assistant', type: 'image', content: d.caption || '📸',
-          media_url: d.image_url, created_at: new Date().toISOString(),
+          media_url: imageUrl, created_at: new Date().toISOString(),
         }]);
         refreshUser();
       }
     } catch (err) {
       clearInterval(interval);
       if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || err.details?.error || 'Video generation failed');
+      else {
+        const recoveredVideo = await recoverLatestMediaMessage('video');
+        const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image');
+        if (!recoveredVideo && !recoveredImage) {
+          alert(err.error || err.details?.error || 'Video generation failed');
+        }
+      }
     }
 
     setMediaLoading(null);
