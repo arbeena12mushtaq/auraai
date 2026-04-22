@@ -1,10 +1,8 @@
-const fs = require('fs');
-const path = require('path');
-const FormData = require('form-data');
-
-const PIXAZO_BASE_URL = (process.env.PIXAZO_BASE_URL || 'https://api.pixazo.ai').replace(/\/$/, '');
 const DEFAULT_TIMEOUT_MS = Number(process.env.PIXAZO_TIMEOUT_MS || 300000);
-const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 4000);
+const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 5000);
+const STATUS_ENDPOINT = (process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}').replace(/\{id\}/g, '{request_id}');
+const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
+const DEFAULT_VIDEO_ENDPOINT = process.env.PIXAZO_VIDEO_ENDPOINT || 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
 
 function getApiKey() {
   const key = process.env.PIXAZO_API_KEY;
@@ -15,8 +13,9 @@ function getApiKey() {
 function getHeaders(extra = {}) {
   const key = getApiKey();
   return {
-    Authorization: `Bearer ${key}`,
-    'x-api-key': key,
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache',
+    'Ocp-Apim-Subscription-Key': key,
     Accept: 'application/json',
     ...extra,
   };
@@ -28,7 +27,7 @@ function withTimeout(ms = DEFAULT_TIMEOUT_MS) {
   return { controller, clear: () => clearTimeout(timer) };
 }
 
-async function parseResponse(res) {
+async function parseJsonResponse(res) {
   const text = await res.text();
   let data;
   try {
@@ -45,47 +44,42 @@ async function parseResponse(res) {
   return data;
 }
 
-function normalizeEndpoint(value) {
-  const raw = String(value || '').trim();
-  if (!raw) throw new Error('Pixazo endpoint is missing');
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `${PIXAZO_BASE_URL}${raw.startsWith('/') ? raw : `/${raw}`}`;
+function extractMediaUrl(payload) {
+  return payload?.output?.media_url?.[0]
+    || payload?.output?.url
+    || payload?.output_url
+    || payload?.video_url
+    || payload?.image_url
+    || null;
 }
 
-function firstDefined(...values) {
-  return values.find(v => v !== undefined && v !== null && v !== '');
+async function postJson(endpoint, body) {
+  const { controller, clear } = withTimeout();
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    return await parseJsonResponse(res);
+  } finally {
+    clear();
+  }
 }
 
-function extractAssetUrl(payload) {
-  return firstDefined(
-    payload?.output_url,
-    payload?.video_url,
-    payload?.image_url,
-    payload?.result_url,
-    payload?.url,
-    payload?.data?.output_url,
-    payload?.data?.video_url,
-    payload?.data?.image_url,
-    payload?.data?.result_url,
-    payload?.data?.url,
-    payload?.data?.output?.url,
-    payload?.output?.url,
-    Array.isArray(payload?.data?.outputs) ? payload.data.outputs[0]?.url : undefined,
-    Array.isArray(payload?.outputs) ? payload.outputs[0]?.url : undefined,
-    Array.isArray(payload?.data?.artifacts) ? payload.data.artifacts[0]?.url : undefined,
-    Array.isArray(payload?.artifacts) ? payload.artifacts[0]?.url : undefined,
-  );
-}
-
-function extractJobId(payload) {
-  return firstDefined(
-    payload?.request_id,
-    payload?.job_id,
-    payload?.id,
-    payload?.data?.request_id,
-    payload?.data?.job_id,
-    payload?.data?.id,
-  );
+async function getJson(url) {
+  const { controller, clear } = withTimeout();
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: getHeaders({ 'Content-Type': undefined }),
+      signal: controller.signal,
+    });
+    return await parseJsonResponse(res);
+  } finally {
+    clear();
+  }
 }
 
 async function downloadToBuffer(url) {
@@ -103,145 +97,82 @@ async function downloadToBuffer(url) {
   }
 }
 
-async function pollForResult(statusEndpoint, jobId) {
+function statusUrlFor(requestId, pollingUrl) {
+  if (pollingUrl) return pollingUrl;
+  return STATUS_ENDPOINT.replace('{request_id}', encodeURIComponent(requestId));
+}
+
+async function pollForCompletion(requestId, pollingUrl) {
   const started = Date.now();
-  const endpoint = statusEndpoint.replace(/\{id\}/g, encodeURIComponent(jobId));
+  const url = statusUrlFor(requestId, pollingUrl);
   while (Date.now() - started < DEFAULT_TIMEOUT_MS) {
-    const { controller, clear } = withTimeout();
-    try {
-      const res = await fetch(endpoint, {
-        method: 'GET',
-        headers: getHeaders(),
-        signal: controller.signal,
-      });
-      const data = await parseResponse(res);
-      const status = String(firstDefined(data?.status, data?.data?.status, '')).toLowerCase();
-      const assetUrl = extractAssetUrl(data);
-      if (assetUrl) return { data, assetUrl };
-      if (['failed', 'error'].includes(status)) {
-        const err = new Error('Pixazo job failed');
+    const data = await getJson(url);
+    const status = String(data?.status || '').toUpperCase();
+    if (status === 'COMPLETED') {
+      const mediaUrl = extractMediaUrl(data);
+      if (!mediaUrl) {
+        const err = new Error('Pixazo completed without media URL');
         err.body = data;
         throw err;
       }
-    } finally {
-      clear();
+      return mediaUrl;
+    }
+    if (status === 'FAILED' || status === 'ERROR') {
+      const err = new Error(`Pixazo job failed: ${data?.error || 'Unknown error'}`);
+      err.body = data;
+      throw err;
     }
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
   throw new Error('Pixazo polling timed out');
 }
 
-async function postJson(endpoint, body) {
-  const { controller, clear } = withTimeout();
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: getHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    return await parseResponse(res);
-  } finally {
-    clear();
-  }
-}
+async function imageToImage({ imageUrl, prompt }) {
+  if (!imageUrl) throw new Error('imageUrl is required for Pixazo image-to-image');
+  const body = {
+    prompt,
+    image_urls: [imageUrl],
+    aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '16:9',
+    resolution: process.env.PIXAZO_IMAGE_RESOLUTION || '2K',
+    output_format: process.env.PIXAZO_IMAGE_OUTPUT_FORMAT || 'png',
+  };
 
-async function postMultipart(endpoint, form) {
-  const { controller, clear } = withTimeout();
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: getHeaders(form.getHeaders()),
-      body: form,
-      signal: controller.signal,
-    });
-    return await parseResponse(res);
-  } finally {
-    clear();
-  }
-}
-
-async function resolveAssetFromPayload(payload, statusEndpoint) {
-  const directUrl = extractAssetUrl(payload);
-  if (directUrl) return downloadToBuffer(directUrl);
-
-  const jobId = extractJobId(payload);
-  if (!jobId || !statusEndpoint) {
-    const err = new Error('Pixazo did not return an asset URL or job id');
+  const payload = await postJson(DEFAULT_IMAGE_ENDPOINT, body);
+  const requestId = payload?.request_id;
+  if (!requestId) {
+    const err = new Error('Pixazo image request did not return request_id');
     err.body = payload;
     throw err;
   }
-
-  const { assetUrl } = await pollForResult(normalizeEndpoint(statusEndpoint), jobId);
-  return downloadToBuffer(assetUrl);
-}
-
-async function tryCandidates(candidates, requester) {
-  let lastErr;
-  for (const candidate of candidates) {
-    try {
-      return await requester(normalizeEndpoint(candidate), candidate);
-    } catch (err) {
-      lastErr = err;
-      if (err?.status === 404) continue;
-      throw err;
-    }
-  }
-  throw lastErr || new Error('Pixazo request failed');
-}
-
-async function imageToImage({ imagePath, prompt }) {
-  const configured = process.env.PIXAZO_IMAGE_ENDPOINT;
-  const candidates = [configured, '/api/image-to-image', '/api/image-editing', '/v1/image-to-image/nano-banana'].filter(Boolean);
-  const statusEndpoint = process.env.PIXAZO_IMAGE_STATUS_ENDPOINT;
-  const model = process.env.PIXAZO_IMAGE_MODEL || 'nano-banana-pro-async-api';
-
-  return tryCandidates(candidates, async endpoint => {
-    const form = new FormData();
-    form.append('image', fs.createReadStream(imagePath), {
-      filename: path.basename(imagePath),
-      contentType: 'image/png',
-    });
-    form.append('prompt', prompt);
-    form.append('model', model);
-    form.append('api_id', model);
-    form.append('response_format', 'url');
-
-    const payload = await postMultipart(endpoint, form);
-    const file = await resolveAssetFromPayload(payload, statusEndpoint);
-    return { ...file, payload, model, endpoint };
-  });
+  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
+  const file = await downloadToBuffer(mediaUrl);
+  return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
 }
 
 async function imageToVideo({ imageUrl, prompt }) {
-  const configured = process.env.PIXAZO_VIDEO_ENDPOINT;
-  const candidates = [configured, '/api/image-to-video', '/v1/video/generate'].filter(Boolean);
-  const statusEndpoint = process.env.PIXAZO_VIDEO_STATUS_ENDPOINT;
-  const model = process.env.PIXAZO_VIDEO_MODEL || 'veo-3-1-fast';
+  if (!imageUrl) throw new Error('imageUrl is required for Pixazo Runway image-to-video');
+  const duration = Number(process.env.PIXAZO_VIDEO_DURATION || 5);
+  if (![5, 10].includes(duration)) throw new Error('PIXAZO_VIDEO_DURATION must be 5 or 10 for Runway Gen-4.5');
 
-  return tryCandidates(candidates, async endpoint => {
-    const body = {
-      image: imageUrl,
-      image_url: imageUrl,
-      prompt,
-      model,
-      api_id: model,
-      duration: Number(process.env.PIXAZO_VIDEO_DURATION || 5),
-      aspect_ratio: process.env.PIXAZO_VIDEO_ASPECT_RATIO || '16:9',
-      fps: Number(process.env.PIXAZO_VIDEO_FPS || 24),
-      enable_audio: true,
-      audio: true,
-      response_format: 'url',
-    };
+  const seedRaw = process.env.PIXAZO_VIDEO_SEED;
+  const body = {
+    prompt,
+    image: imageUrl,
+    duration,
+    aspect_ratio: process.env.PIXAZO_VIDEO_ASPECT_RATIO || '16:9',
+  };
+  if (seedRaw !== undefined && seedRaw !== '') body.seed = Number(seedRaw);
 
-    const payload = await postJson(endpoint, body);
-    const file = await resolveAssetFromPayload(payload, statusEndpoint);
-    return { ...file, payload, model, endpoint };
-  });
+  const payload = await postJson(DEFAULT_VIDEO_ENDPOINT, body);
+  const requestId = payload?.request_id;
+  if (!requestId) {
+    const err = new Error('Runway request did not return request_id');
+    err.body = payload;
+    throw err;
+  }
+  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
+  const file = await downloadToBuffer(mediaUrl);
+  return { ...file, payload, model: 'runway-gen-4-5', endpoint: DEFAULT_VIDEO_ENDPOINT };
 }
 
-module.exports = {
-  imageToImage,
-  imageToVideo,
-  downloadToBuffer,
-};
+module.exports = { imageToImage, imageToVideo };

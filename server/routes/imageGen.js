@@ -225,19 +225,27 @@ function extFromContentType(contentType, fallback = '.bin') {
 }
 
 
+function toAbsolutePublicUrl(relativeOrAbsolute) {
+  if (!relativeOrAbsolute) return null;
+  if (/^https?:\/\//i.test(relativeOrAbsolute)) return relativeOrAbsolute;
+  const publicBase = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
+  if (!publicBase) return null;
+  return `${publicBase}${relativeOrAbsolute.startsWith('/') ? '' : '/'}${relativeOrAbsolute}`;
+}
+
 async function createSceneFromAvatar(companion, userPrompt = '') {
-  const avatarPath = publicUrlToLocalPath(companion.avatar_url);
-  if (!avatarPath || !fs.existsSync(avatarPath)) {
-    throw new Error('Companion avatar is missing. Generate or upload an avatar first.');
+  const avatarUrl = toAbsolutePublicUrl(companion.avatar_url);
+  if (!avatarUrl) {
+    throw new Error('Companion avatar is missing or PUBLIC_BASE_URL / APP_BASE_URL is not configured.');
   }
 
   const scene = getRandomRealisticScene();
   const result = await imageToImage({
-    imagePath: avatarPath,
+    imageUrl: avatarUrl,
     prompt: scenePromptForCompanion(companion, scene, userPrompt),
   });
 
-  return { avatarPath, scene, result };
+  return { avatarUrl, scene, result };
 }
 
 router.post('/generate', authMiddleware, async (req, res) => {
@@ -289,7 +297,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     return res.json({
       image_url: imageUrl,
       caption: '📸',
-      provider: 'pixazo',
+      provider: 'pixazo-runway',
       model: result.model,
       scene,
       mode: 'realistic_scene',
@@ -340,7 +348,7 @@ async function generateFlirtyVideo(req, res) {
       video_url: videoUrl,
       scene_image_url: sceneImageUrl,
       caption: '🎬',
-      provider: 'pixazo',
+      provider: 'pixazo-runway',
       video_model: videoResult.model,
       image_model: sceneResult.model,
       scene,
