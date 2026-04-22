@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
-const { img2img, img2video } = require('../services/deapi');
+const { imageToImage, imageToVideo } = require('../services/pixazo');
 
 const router = express.Router();
 const uploadDir = path.join(__dirname, '..', 'uploads');
@@ -44,35 +44,28 @@ function sanitizePrompt(text) {
     .trim();
 }
 
-function getRandomFantasyScene() {
+function getRandomRealisticScene() {
   const scenes = [
-    { setting: 'enchanted moonlit forest with glowing flowers and floating fireflies', outfit: 'ornate fantasy cloak with silver embroidery and fitted leather boots' },
-    { setting: 'ancient crystal cave illuminated by blue magical light', outfit: 'mystic battle dress with gemstone accents and elegant arm cuffs' },
-    { setting: 'royal castle balcony above the clouds at sunset', outfit: 'regal velvet gown with gold trim and a jeweled cape' },
-    { setting: 'gothic throne room with candles, black stone arches, and crimson banners', outfit: 'dark royal attire with intricate lace, polished armor details, and a dramatic mantle' },
-    { setting: 'floating sky temple with waterfalls and glowing runes', outfit: 'celestial fantasy robes with luminous patterns and silk layers' },
-    { setting: 'snowy mountain pass beside a dragon shrine', outfit: 'fur-lined fantasy travel coat with engraved armor plates' },
-    { setting: 'ancient desert ruins under a violet twilight sky', outfit: 'desert fantasy garments with embroidered veil, jewelry, and elegant wraps' },
-    { setting: 'mystical library with towering bookshelves and golden spell circles', outfit: 'scholarly sorcerer outfit with embroidered jacket and magical accessories' },
-    { setting: 'elven garden with marble statues, waterfalls, and soft glowing lanterns', outfit: 'flowing elven ceremonial attire with leaf-inspired detailing' },
-    { setting: 'volcanic obsidian citadel with sparks and molten rivers in the distance', outfit: 'heroic dark armor with glowing accents and a dramatic cape' },
+    { setting: 'luxury bedroom with warm lamp light and elegant decor', outfit: 'stylish fitted evening dress with glamorous styling' },
+    { setting: 'cozy coffee shop by the window with golden hour light', outfit: 'chic body-skimming dress with a modern fashionable look' },
+    { setting: 'modern apartment living room with soft daylight', outfit: 'sleek fitted lounge set styled in a polished attractive way' },
+    { setting: 'rooftop lounge with city lights at night', outfit: 'black cocktail dress with bold elegant fashion styling' },
+    { setting: 'ocean-view balcony at sunset with warm breeze', outfit: 'luxury resort outfit with refined glamorous styling' },
+    { setting: 'high-end restaurant with candlelight ambiance', outfit: 'elegant satin dress with sophisticated evening styling' },
   ];
 
   const cameras = [
-    'cinematic close-up portrait, eyes toward camera, shallow depth of field',
-    'medium shot from the waist up, confident stance, dramatic fantasy lighting',
-    'full body heroic pose, centered frame, epic cinematic composition',
-    '3/4 angle portrait, slight turn toward camera, elegant posture',
-    'low-angle power shot, strong heroic presence, fantasy movie still',
-    'seated royal portrait, composed expression, richly detailed background',
+    'medium close-up, eye-level framing, shallow depth of field, looking into camera',
+    'selfie-style framing, slight high angle, natural phone-camera perspective',
+    'waist-up portrait, slight 3/4 angle, cinematic depth of field',
+    'close-up portrait, subtle side angle, soft focus background, intimate framing',
   ];
 
   const moods = [
-    'majestic and magical',
-    'mysterious and elegant',
-    'heroic and cinematic',
-    'dreamlike and ethereal',
-    'dark fantasy and regal',
+    'playful and charming',
+    'confident and flirty',
+    'warm and teasing',
+    'soft and inviting',
   ];
 
   const scene = scenes[Math.floor(Math.random() * scenes.length)];
@@ -81,6 +74,17 @@ function getRandomFantasyScene() {
     camera: cameras[Math.floor(Math.random() * cameras.length)],
     mood: moods[Math.floor(Math.random() * moods.length)],
   };
+}
+
+function getRandomFlirtyDialogue() {
+  const lines = [
+    'hey... you showed up right on time. were you thinking about me?',
+    'you have that look again... are you going to say something, or just keep staring?',
+    'mmm, you seem interesting today. tell me what is on your mind.',
+    'i like your timing... you always appear when things are getting fun.',
+    'come on, talk to me... i want to hear what made you open this chat.',
+  ];
+  return lines[Math.floor(Math.random() * lines.length)];
 }
 
 async function generateWithPollinations(prompt, width = 1024, height = 1024) {
@@ -98,7 +102,7 @@ async function generateWithPollinations(prompt, width = 1024, height = 1024) {
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'accept': 'image/*,*/*;q=0.8',
+          accept: 'image/*,*/*;q=0.8',
           'user-agent': 'AuraAI/1.0',
         },
       });
@@ -149,7 +153,7 @@ function publicUrlToLocalPath(url) {
 }
 
 function buildCharacterSummary(companion) {
-  const gender = companion.category === 'Guys' ? 'male fantasy character' : 'female fantasy character';
+  const gender = companion.category === 'Guys' ? 'man' : 'woman';
   const name = companion.name ? `${companion.name}, ` : '';
   const description = sanitizePrompt(companion.description || '');
   const personality = sanitizePrompt(companion.personality || 'confident and charming');
@@ -163,31 +167,65 @@ function buildCharacterSummary(companion) {
   ].filter(Boolean).join(', ');
 }
 
-function scenePromptForCompanion(companion, scene) {
+function scenePromptForCompanion(companion, scene, userPrompt = '') {
   const character = buildCharacterSummary(companion);
+  const extra = sanitizePrompt(userPrompt || '');
+
   return [
-    `Transform this exact avatar into a high-detail fantasy portrait of ${character}.`,
-    `Setting: ${scene.setting}.`,
-    `Outfit: ${scene.outfit}.`,
+    `Use the uploaded avatar as the identity anchor for ${character}.`,
+    'Keep the same face, hairstyle, skin tone, facial proportions, and overall identity exactly consistent with the source avatar.',
+    `Background: ${scene.setting}.`,
+    `Wardrobe: ${scene.outfit}.`,
+    `Camera framing: ${scene.camera}.`,
     `Mood: ${scene.mood}.`,
-    `Camera: ${scene.camera}.`,
-    'Keep the same face identity, same hair, same body proportions, and same core visual identity from the source avatar.',
-    'Highly detailed fantasy environment, cinematic composition, polished lighting, premium concept-art realism, tasteful, fully clothed, no text, no watermark.',
+    extra ? `Additional styling request: ${extra}.` : '',
+    'Style: photorealistic, natural skin texture, cinematic lighting, realistic smartphone or DSLR portrait photography, modern lifestyle aesthetic.',
+    'Important rules: adult-looking subject only, fully clothed, no nudity, no fantasy effects, no text, no watermark.',
+  ].filter(Boolean).join(' ');
+}
+
+function flirtyVideoPromptForCompanion(companion, scene, actionPrompt = '') {
+  const character = buildCharacterSummary(companion);
+  const spokenLine = sanitizePrompt(actionPrompt || getRandomFlirtyDialogue());
+  return [
+    `Create a highly realistic live-action talking video of ${character}.`,
+    `She is in this setting: ${scene.setting}.`,
+    `Her outfit is: ${scene.outfit}.`,
+    `Shot style: ${scene.camera}.`,
+    `Emotion: ${scene.mood}.`,
+    `She speaks directly to camera and says in a playful, flirty, natural tone: "${spokenLine}".`,
+    'Include realistic lip sync, natural blinking, subtle head tilts, soft breathing, slight smile changes, engaging eye contact, and gentle flirtatious body language.',
+    'Use camera motion like a slow push-in, slight handheld drift, tiny framing adjustments, and a natural phone-video feel.',
+    'Keep the exact same identity as the source avatar and first frame throughout the full video.',
+    'Ultra realistic, natural motion, clean audio in the video, no subtitles, no text, no watermark, no fantasy elements, fully clothed adult-looking subject only.',
   ].join(' ');
 }
 
-function videoPromptForCompanion(companion, scene) {
-  return [
-    `Animate ${companion.name || 'this fantasy character'} in the same fantasy setting: ${scene.setting}.`,
-    `Outfit remains: ${scene.outfit}.`,
-    'Motion: subtle blinking, gentle breathing, slight head turn, soft hair and fabric movement, cinematic ambient motion.',
-    `Mood: ${scene.mood}.`,
-    'Keep identity consistent with the first frame, preserve face and styling, smooth natural motion, no distortion, no extra limbs, no text, no watermark.',
-  ].join(' ');
+function extFromContentType(contentType, fallback = '.bin') {
+  const type = String(contentType || '').toLowerCase();
+  if (type.includes('mpeg') || type.includes('mp3')) return '.mp3';
+  if (type.includes('wav')) return '.wav';
+  if (type.includes('ogg')) return '.ogg';
+  if (type.includes('flac')) return '.flac';
+  if (type.includes('mp4')) return '.mp4';
+  if (type.includes('png')) return '.png';
+  return fallback;
 }
 
-const DEAPI_IMAGE_NEGATIVE = 'low quality, blurry, distorted face, extra fingers, extra limbs, bad anatomy, cropped, duplicate, text, watermark, nsfw';
-const DEAPI_VIDEO_NEGATIVE = 'jitter, flicker, warped face, extra limbs, blurry, distorted anatomy, text, watermark, low quality';
+async function createSceneFromAvatar(companion, userPrompt = '') {
+  const avatarPath = publicUrlToLocalPath(companion.avatar_url);
+  if (!avatarPath || !fs.existsSync(avatarPath)) {
+    throw new Error('Companion avatar is missing. Generate or upload an avatar first.');
+  }
+
+  const scene = getRandomRealisticScene();
+  const result = await imageToImage({
+    imagePath: avatarPath,
+    prompt: scenePromptForCompanion(companion, scene, userPrompt),
+  });
+
+  return { avatarPath, scene, result };
+}
 
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
@@ -200,8 +238,8 @@ router.post('/generate', authMiddleware, async (req, res) => {
     const desc = sanitizePrompt(req.body.description);
 
     const prompt = isAnime
-      ? `anime character portrait, ${gender}, ${desc}, fantasy-inspired anime art, vibrant colors, detailed eyes, front facing, looking at camera`
-      : `photorealistic portrait of a ${gender}, ${desc}, professional fantasy-inspired photography, 85mm lens, natural lighting, detailed skin, front facing, looking at camera, high resolution`;
+      ? `anime character portrait, ${gender}, ${desc}, polished anime art, vibrant colors, detailed eyes, front facing, looking at camera`
+      : `photorealistic portrait of a ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin, front facing, looking at camera, high resolution`;
 
     const imageBuffer = await generateWithPollinations(prompt);
     if (!imageBuffer) {
@@ -218,29 +256,16 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
 router.post('/generate-scene', authMiddleware, async (req, res) => {
   try {
-    const { companionId } = req.body;
+    const { companionId, prompt: userPrompt } = req.body;
     if (!companionId) return res.status(400).json({ error: 'companionId required' });
 
     const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
     if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
     const companion = comp.rows[0];
 
-    await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Fantasy scene of ${companion.name}`);
+    await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
 
-    const avatarPath = publicUrlToLocalPath(companion.avatar_url);
-    if (!avatarPath || !fs.existsSync(avatarPath)) {
-      await refundTokens(req.user.id, TOKEN_COSTS.image);
-      return res.status(400).json({ error: 'Companion avatar is missing. Generate or upload an avatar first.' });
-    }
-
-    const scene = getRandomFantasyScene();
-    const prompt = scenePromptForCompanion(companion, scene);
-    const result = await img2img({
-      imagePath: avatarPath,
-      prompt,
-      negativePrompt: DEAPI_IMAGE_NEGATIVE,
-    });
-
+    const { scene, result } = await createSceneFromAvatar(companion, userPrompt);
     const imageUrl = saveBuffer('scene', result.buffer, '.png');
 
     await pool.query(
@@ -251,78 +276,80 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     return res.json({
       image_url: imageUrl,
       caption: '📸',
-      provider: 'deapi',
+      provider: 'pixazo',
       model: result.model,
       scene,
+      mode: 'realistic_scene',
     });
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.message || 'Fantasy image generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.message || 'Realistic image generation failed' });
   }
 });
 
-router.post('/generate-video', authMiddleware, async (req, res) => {
+async function generateFlirtyVideo(req, res) {
+  const { companionId, prompt: userPrompt, actionPrompt } = req.body;
+  if (!companionId) return res.status(400).json({ error: 'companionId required' });
+
+  const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
+  if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
+  const companion = comp.rows[0];
+
+  await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Flirty talking video of ${companion.name}`);
+
+  const { scene, result: sceneResult } = await createSceneFromAvatar(companion, userPrompt);
+  const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
+  fs.writeFileSync(tempScenePath, sceneResult.buffer);
+
   try {
-    const { companionId } = req.body;
-    if (!companionId) return res.status(400).json({ error: 'companionId required' });
+    const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || '').replace(/\/$/, '');
+    if (!publicBaseUrl) throw new Error('PUBLIC_BASE_URL or APP_BASE_URL is required for Pixazo video generation');
 
-    const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
-    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
-    const companion = comp.rows[0];
+    const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
+    const absoluteSceneUrl = `${publicBaseUrl}${sceneImageUrl}`;
 
-    await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Fantasy video of ${companion.name}`);
-
-    const avatarPath = publicUrlToLocalPath(companion.avatar_url);
-    if (!avatarPath || !fs.existsSync(avatarPath)) {
-      await refundTokens(req.user.id, TOKEN_COSTS.video);
-      return res.status(400).json({ error: 'Companion avatar is missing. Generate or upload an avatar first.' });
-    }
-
-    const scene = getRandomFantasyScene();
-    const sceneResult = await img2img({
-      imagePath: avatarPath,
-      prompt: scenePromptForCompanion(companion, scene),
-      negativePrompt: DEAPI_IMAGE_NEGATIVE,
+    const videoResult = await imageToVideo({
+      imageUrl: absoluteSceneUrl,
+      prompt: flirtyVideoPromptForCompanion(companion, scene, actionPrompt),
     });
 
-    const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
-    fs.writeFileSync(tempScenePath, sceneResult.buffer);
+    const videoUrl = saveBuffer('video', videoResult.buffer, '.mp4');
 
-    try {
-      const videoResult = await img2video({
-        imagePath: tempScenePath,
-        prompt: videoPromptForCompanion(companion, scene),
-        negativePrompt: DEAPI_VIDEO_NEGATIVE,
-      });
+    await pool.query(
+      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
+      [req.user.id, companionId, '🎬', videoUrl]
+    );
 
-      const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
-      const videoUrl = saveBuffer('video', videoResult.buffer, '.mp4');
+    return res.json({
+      video_url: videoUrl,
+      scene_image_url: sceneImageUrl,
+      caption: '🎬',
+      provider: 'pixazo',
+      video_model: videoResult.model,
+      image_model: sceneResult.model,
+      scene,
+      mode: 'flirty_talking_video',
+      has_audio: true,
+      music: false,
+    });
+  } finally {
+    try { fs.unlinkSync(tempScenePath); } catch {}
+  }
+}
 
-      await pool.query(
-        `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
-        [req.user.id, companionId, '🎬', videoUrl]
-      );
 
-      return res.json({
-        video_url: videoUrl,
-        scene_image_url: sceneImageUrl,
-        caption: '🎬',
-        provider: 'deapi',
-        video_model: videoResult.model,
-        image_model: sceneResult.model,
-        scene,
-      });
-    } finally {
-      try { fs.unlinkSync(tempScenePath); } catch {}
-    }
+router.post('/generate-video', authMiddleware, async (req, res) => {
+  try {
+    return await generateFlirtyVideo(req, res);
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.message || 'Fantasy video generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.message || 'Talking video generation failed' });
   }
 });
+
 
 module.exports = router;
