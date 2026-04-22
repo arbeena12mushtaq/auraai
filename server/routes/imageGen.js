@@ -306,7 +306,7 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.message || 'Realistic image generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.body?.error || err?.message || 'Realistic image generation failed' });
   }
 });
 
@@ -369,7 +369,7 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
     await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json({ error: err?.body?.message || err?.message || 'Realistic video generation failed' });
+    return res.status(500).json({ error: err?.body?.message || err?.body?.error || err?.message || 'Realistic video generation failed' });
   }
 });
 

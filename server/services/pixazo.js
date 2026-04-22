@@ -1,6 +1,6 @@
 const DEFAULT_TIMEOUT_MS = Number(process.env.PIXAZO_TIMEOUT_MS || 300000);
 const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 5000);
-const STATUS_ENDPOINT = (process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}').replace(/\{id\}/g, '{request_id}');
+const STATUS_ENDPOINT = process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}';
 const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
 const DEFAULT_VIDEO_ENDPOINT = process.env.PIXAZO_VIDEO_ENDPOINT || 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
 
@@ -13,10 +13,10 @@ function getApiKey() {
 function getHeaders(extra = {}) {
   const key = getApiKey();
   return {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
     'Cache-Control': 'no-cache',
     'Ocp-Apim-Subscription-Key': key,
-    Accept: 'application/json',
     ...extra,
   };
 }
@@ -36,7 +36,8 @@ async function parseJsonResponse(res) {
     data = { raw: text };
   }
   if (!res.ok) {
-    const err = new Error(`Pixazo request failed: ${res.status}`);
+    const message = data?.message || data?.error || `Pixazo request failed: ${res.status}`;
+    const err = new Error(message);
     err.status = res.status;
     err.body = data;
     throw err;
@@ -47,6 +48,7 @@ async function parseJsonResponse(res) {
 function extractMediaUrl(payload) {
   return payload?.output?.media_url?.[0]
     || payload?.output?.url
+    || payload?.output
     || payload?.output_url
     || payload?.video_url
     || payload?.image_url
@@ -73,7 +75,11 @@ async function getJson(url) {
   try {
     const res = await fetch(url, {
       method: 'GET',
-      headers: getHeaders({ 'Content-Type': undefined }),
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
+        'Ocp-Apim-Subscription-Key': getApiKey(),
+      },
       signal: controller.signal,
     });
     return await parseJsonResponse(res);
@@ -108,7 +114,7 @@ async function pollForCompletion(requestId, pollingUrl) {
   while (Date.now() - started < DEFAULT_TIMEOUT_MS) {
     const data = await getJson(url);
     const status = String(data?.status || '').toUpperCase();
-    if (status === 'COMPLETED') {
+    if (status === 'COMPLETED' || status === 'SUCCEEDED') {
       const mediaUrl = extractMediaUrl(data);
       if (!mediaUrl) {
         const err = new Error('Pixazo completed without media URL');
@@ -117,8 +123,8 @@ async function pollForCompletion(requestId, pollingUrl) {
       }
       return mediaUrl;
     }
-    if (status === 'FAILED' || status === 'ERROR') {
-      const err = new Error(`Pixazo job failed: ${data?.error || 'Unknown error'}`);
+    if (status === 'FAILED' || status === 'ERROR' || status === 'CANCELLED') {
+      const err = new Error(`Pixazo job failed: ${data?.error || data?.message || 'Unknown error'}`);
       err.body = data;
       throw err;
     }
