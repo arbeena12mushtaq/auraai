@@ -240,13 +240,32 @@ function safeErrorPayload(err) {
     error: err?.body?.message || err?.body?.error || err?.message || 'Unknown error',
     status: err?.status || 500,
     details: err?.body || null,
+    stack: process.env.NODE_ENV === 'production' ? undefined : err?.stack,
   };
+}
+
+async function checkPublicImageUrl(url) {
+  try {
+    const res = await fetch(url, { method: 'GET', headers: { accept: 'image/*,*/*;q=0.8' } });
+    const contentType = res.headers.get('content-type') || '';
+    return { ok: res.ok, status: res.status, contentType };
+  } catch (err) {
+    return { ok: false, status: 0, contentType: '', error: err.message };
+  }
 }
 
 async function createSceneFromAvatar(companion, userPrompt = '', req = null) {
   const avatarUrl = toAbsolutePublicUrl(companion.avatar_url, req);
   if (!avatarUrl) {
     throw new Error('Companion avatar is missing or PUBLIC_BASE_URL / APP_BASE_URL is not configured.');
+  }
+
+  const probe = await checkPublicImageUrl(avatarUrl);
+  console.log('🧪 Avatar URL probe:', probe);
+  if (!probe.ok) {
+    const e = new Error(`Avatar URL is not publicly reachable (${probe.status || 'network error'})`);
+    e.body = probe;
+    throw e;
   }
 
   const scene = getRandomRealisticScene();
@@ -296,8 +315,9 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
 
     await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
 
-    const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt, req);
+    const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
     console.log('🖼️ Scene source avatar URL:', avatarUrl);
+    console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
     const imageUrl = saveBuffer('scene', result.buffer, '.png');
 
     await pool.query(
@@ -331,7 +351,7 @@ async function generateFlirtyVideo(req, res) {
 
   await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Talking realistic video of ${companion.name}`);
 
-  const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt, req);
+  const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
   console.log('🎞️ Video source avatar URL:', avatarUrl);
   const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
   fs.writeFileSync(tempScenePath, sceneResult.buffer);

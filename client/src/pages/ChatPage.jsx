@@ -178,7 +178,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     } catch (err) {
       clearInterval(interval);
       if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || 'Image generation failed');
+      else alert(err.error || err.details?.error || 'Image generation failed');
     }
 
     setMediaLoading(null);
@@ -227,7 +227,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     } catch (err) {
       clearInterval(interval);
       if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else alert(err.error || 'Video generation failed');
+      else alert(err.error || err.details?.error || 'Video generation failed');
     }
 
     setMediaLoading(null);

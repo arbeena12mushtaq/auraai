@@ -52,7 +52,26 @@ function extractMediaUrl(payload) {
     || payload?.output_url
     || payload?.video_url
     || payload?.image_url
+    || payload?.media_url?.[0]
+    || payload?.url
     || null;
+}
+
+function extractDataUri(payload) {
+  return payload?.output?.data_uri
+    || payload?.data_uri
+    || payload?.image
+    || null;
+}
+
+function decodeDataUri(dataUri) {
+  const match = String(dataUri || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    buffer: Buffer.from(match[2], 'base64'),
+    contentType: match[1],
+    sourceUrl: null,
+  };
 }
 
 async function postJson(endpoint, body) {
@@ -141,12 +160,30 @@ async function imageToImage({ imageUrl, prompt }) {
     aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '16:9',
     resolution: process.env.PIXAZO_IMAGE_RESOLUTION || '2K',
     output_format: process.env.PIXAZO_IMAGE_OUTPUT_FORMAT || 'png',
+    sync_mode: String(process.env.PIXAZO_IMAGE_SYNC_MODE || 'true').toLowerCase() === 'true',
+    num_images: 1,
+    limit_generations: true,
   };
 
   const payload = await postJson(DEFAULT_IMAGE_ENDPOINT, body);
+
+  const dataUri = extractDataUri(payload);
+  if (dataUri) {
+    const decoded = decodeDataUri(dataUri);
+    if (decoded?.buffer?.length) {
+      return { ...decoded, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
+    }
+  }
+
+  const immediateMediaUrl = extractMediaUrl(payload);
+  if (immediateMediaUrl && !payload?.request_id) {
+    const file = await downloadToBuffer(immediateMediaUrl);
+    return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT };
+  }
+
   const requestId = payload?.request_id;
   if (!requestId) {
-    const err = new Error('Pixazo image request did not return request_id');
+    const err = new Error('Pixazo image request did not return request_id or direct output');
     err.body = payload;
     throw err;
   }
