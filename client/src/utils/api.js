@@ -24,18 +24,29 @@ export async function api(path, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(`${API_BASE}/api${path}`, {
-    ...options,
-    headers,
-    body: options.body instanceof FormData ? options.body : (options.body ? JSON.stringify(options.body) : undefined),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/api${path}`, {
+      ...options,
+      headers,
+      body: options.body instanceof FormData ? options.body : (options.body ? JSON.stringify(options.body) : undefined),
+    });
+  } catch (error) {
+    throw { error: error?.message || 'Network request failed' };
+  }
 
-  const data = await res.json();
-  
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = { error: raw || `Request failed with status ${res.status}` };
+  }
+
   if (!res.ok) {
     throw { status: res.status, ...data };
   }
-  
+
   return data;
 }
 

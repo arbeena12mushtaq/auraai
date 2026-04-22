@@ -319,20 +319,28 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
     console.log('🖼️ Scene source avatar URL:', avatarUrl);
     console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
     const imageUrl = saveBuffer('scene', result.buffer, '.png');
+    const publicImageUrl = toAbsolutePublicUrl(imageUrl, req) || imageUrl;
+    console.log('🖼️ Saved scene image path:', imageUrl);
+    console.log('🖼️ Saved scene public URL:', publicImageUrl);
+    const savedProbe = await checkPublicImageUrl(publicImageUrl);
+    console.log('🧪 Saved scene URL probe:', savedProbe);
 
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', imageUrl]
+      [req.user.id, companionId, '📸', publicImageUrl]
     );
 
-    return res.json({
-      image_url: imageUrl,
+    const payload = {
+      image_url: publicImageUrl,
+      image_path: imageUrl,
       caption: '📸',
       provider: 'pixazo-runway',
       model: result.model,
       scene,
       mode: 'realistic_scene',
-    });
+    };
+    console.log('✅ Scene response payload:', payload);
+    return res.json(payload);
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
@@ -370,15 +378,20 @@ async function generateFlirtyVideo(req, res) {
     });
 
     const videoUrl = saveBuffer('video', videoResult.buffer, '.mp4');
+    const publicVideoUrl = toAbsolutePublicUrl(videoUrl, req) || videoUrl;
+    console.log('🎞️ Saved video path:', videoUrl);
+    console.log('🎞️ Saved video public URL:', publicVideoUrl);
 
     await pool.query(
       `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
-      [req.user.id, companionId, '🎬', videoUrl]
+      [req.user.id, companionId, '🎬', publicVideoUrl]
     );
 
-    return res.json({
-      video_url: videoUrl,
-      scene_image_url: sceneImageUrl,
+    const payload = {
+      video_url: publicVideoUrl,
+      video_path: videoUrl,
+      scene_image_url: absoluteSceneUrl,
+      scene_image_path: sceneImageUrl,
       caption: '🎬',
       provider: 'pixazo-runway',
       video_model: videoResult.model,
@@ -387,7 +400,9 @@ async function generateFlirtyVideo(req, res) {
       mode: 'talking_flirty',
       has_audio: true,
       music: false,
-    });
+    };
+    console.log('✅ Video response payload:', payload);
+    return res.json(payload);
   } finally {
     try { fs.unlinkSync(tempScenePath); } catch {}
   }
