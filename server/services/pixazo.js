@@ -3,6 +3,8 @@ const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 5000);
 const STATUS_ENDPOINT = process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}';
 const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
 const DEFAULT_VIDEO_ENDPOINT = process.env.PIXAZO_VIDEO_ENDPOINT || 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
+const OFFICIAL_IMAGE_ENDPOINT = 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
+const OFFICIAL_VIDEO_ENDPOINT = 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
 
 function getApiKey() {
   const key = process.env.PIXAZO_API_KEY;
