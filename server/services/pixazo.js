@@ -107,6 +107,32 @@ async function getJson(url) {
   }
 }
 
+
+function isNotFoundError(err) {
+  const message = String(err?.message || '').toLowerCase();
+  return err?.status === 404 || message.includes('resource not found') || message.includes('not found');
+}
+
+async function postJsonWithFallback(endpoints, body, label) {
+  let lastErr;
+  const unique = [...new Set((Array.isArray(endpoints) ? endpoints : [endpoints]).filter(Boolean))];
+  for (const endpoint of unique) {
+    try {
+      console.log(`🌐 Pixazo ${label} endpoint: ${endpoint}`);
+      return await postJson(endpoint, body);
+    } catch (err) {
+      lastErr = err;
+      console.error(`❌ Pixazo ${label} endpoint failed: ${endpoint}`, {
+        message: err?.message,
+        status: err?.status,
+        body: err?.body,
+      });
+      if (!isNotFoundError(err)) throw err;
+    }
+  }
+  throw lastErr || new Error(`No working Pixazo ${label} endpoint found`);
+}
+
 async function downloadToBuffer(url) {
   const { controller, clear } = withTimeout();
   try {
@@ -165,7 +191,7 @@ async function imageToImage({ imageUrl, prompt }) {
     limit_generations: true,
   };
 
-  const payload = await postJson(DEFAULT_IMAGE_ENDPOINT, body);
+  const payload = await postJsonWithFallback([DEFAULT_IMAGE_ENDPOINT, OFFICIAL_IMAGE_ENDPOINT], body, 'image');
 
   const dataUri = extractDataUri(payload);
   if (dataUri) {
@@ -206,7 +232,7 @@ async function imageToVideo({ imageUrl, prompt }) {
   };
   if (seedRaw !== undefined && seedRaw !== '') body.seed = Number(seedRaw);
 
-  const payload = await postJson(DEFAULT_VIDEO_ENDPOINT, body);
+  const payload = await postJsonWithFallback([DEFAULT_VIDEO_ENDPOINT, OFFICIAL_VIDEO_ENDPOINT], body, 'video');
   const requestId = payload?.request_id;
   if (!requestId) {
     const err = new Error('Runway request did not return request_id');
