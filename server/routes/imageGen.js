@@ -11,6 +11,20 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const TOKEN_COSTS = { image: 5, video: 15 };
 
+const mediaJobs = new Map();
+const JOB_TTL_MS = 1000 * 60 * 30;
+function createMediaJob(type, userId, companionId) {
+  const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
+  mediaJobs.set(id, { id, type, userId, companionId, status: 'queued', created_at: new Date().toISOString() });
+  setTimeout(() => mediaJobs.delete(id), JOB_TTL_MS).unref?.();
+  return id;
+}
+function updateMediaJob(id, patch) {
+  const prev = mediaJobs.get(id) || { id };
+  mediaJobs.set(id, { ...prev, ...patch, updated_at: new Date().toISOString() });
+}
+function getMediaJob(id) { return mediaJobs.get(id); }
+
 async function deductTokens(userId, amount, action, description) {
   const user = await pool.query('SELECT tokens, is_admin FROM users WHERE id = $1', [userId]);
   if (!user.rows[0]) throw { code: 'NOT_FOUND', error: 'User not found' };
@@ -307,55 +321,68 @@ router.post('/generate', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/jobs/:jobId', authMiddleware, async (req, res) => {
+  const job = getMediaJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.userId !== req.user.id && !req.user.is_admin) return res.status(403).json({ error: 'Forbidden' });
+  return res.json(job);
+});
+
 router.post('/generate-scene', authMiddleware, async (req, res) => {
-  try {
-    const { companionId, prompt: userPrompt } = req.body;
-    if (!companionId) return res.status(400).json({ error: 'companionId required' });
+  const { companionId, prompt: userPrompt } = req.body;
+  if (!companionId) return res.status(400).json({ error: 'companionId required' });
 
-    const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
-    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
-    const companion = comp.rows[0];
+  const jobId = createMediaJob('image', req.user.id, companionId);
+  updateMediaJob(jobId, { status: 'processing' });
+  res.json({ success: true, queued: true, job_id: jobId, jobId });
 
-    await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
+  setImmediate(async () => {
+    try {
+      const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
+      if (!comp.rows.length) throw { status: 404, error: 'Not found' };
+      const companion = comp.rows[0];
 
-    const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
-    console.log('🖼️ Scene source avatar URL:', avatarUrl);
-    console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
-    const cachedImagePath = saveBuffer('scene', result.buffer, '.png');
-    const cachedPublicImageUrl = toAbsolutePublicUrl(cachedImagePath, req) || cachedImagePath;
-    const persistentImageUrl = result?.sourceUrl || cachedPublicImageUrl;
-    console.log('🖼️ Saved scene image path:', cachedImagePath);
-    console.log('🖼️ Saved scene public URL:', cachedPublicImageUrl);
-    console.log('🖼️ Persistent scene URL:', persistentImageUrl);
-    const savedProbe = await checkPublicImageUrl(cachedPublicImageUrl);
-    console.log('🧪 Saved scene URL probe:', savedProbe);
-
-    await pool.query(
-      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', persistentImageUrl]
-    );
-
-    const payload = {
-      success: true,
-      image_url: persistentImageUrl,
-      imageUrl: persistentImageUrl,
-      image_path: cachedImagePath,
-      imagePath: cachedImagePath,
-      cached_image_url: cachedPublicImageUrl,
-      caption: '📸',
-      provider: 'pixazo-runway',
-      model: result.model,
-      scene,
-      mode: 'realistic_scene',
-    };
-    console.log('✅ Scene response payload:', payload);
-    return res.json(payload);
-  } catch (err) {
-    if (err.code === 'NO_TOKENS') return res.status(403).json(err);
-    console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
-    await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
-    return res.status(500).json(safeErrorPayload(err));
-  }
+      await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
+      const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
+      console.log('🖼️ Scene source avatar URL:', avatarUrl);
+      console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
+      const cachedImagePath = saveBuffer('scene', result.buffer, '.png');
+      const cachedPublicImageUrl = toAbsolutePublicUrl(cachedImagePath, req) || cachedImagePath;
+      const persistentImageUrl = result?.sourceUrl || cachedPublicImageUrl;
+      console.log('🖼️ Saved scene image path:', cachedImagePath);
+      console.log('🖼️ Saved scene public URL:', cachedPublicImageUrl);
+      console.log('🖼️ Persistent scene URL:', persistentImageUrl);
+      const savedProbe = await checkPublicImageUrl(cachedPublicImageUrl);
+      console.log('🧪 Saved scene URL probe:', savedProbe);
+      try {
+        await pool.query(
+          `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
+          [req.user.id, companionId, '📸', persistentImageUrl]
+        );
+      } catch (dbErr) {
+        console.error('Scene DB insert error:', dbErr?.message || dbErr);
+      }
+      const payload = {
+        success: true,
+        image_url: persistentImageUrl,
+        imageUrl: persistentImageUrl,
+        image_path: cachedImagePath,
+        imagePath: cachedImagePath,
+        cached_image_url: cachedPublicImageUrl,
+        caption: '📸',
+        provider: 'pixazo-runway',
+        model: result.model,
+        scene,
+        mode: 'realistic_scene',
+      };
+      console.log('✅ Scene response payload:', payload);
+      updateMediaJob(jobId, { status: 'completed', result: payload });
+    } catch (err) {
+      if (err.code !== 'NO_TOKENS') await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
+      console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
+      updateMediaJob(jobId, { status: 'failed', error: safeErrorPayload(err) });
+    }
+  });
 });
 
 async function generateFlirtyVideo(req, res) {
@@ -423,14 +450,24 @@ async function generateFlirtyVideo(req, res) {
 
 
 router.post('/generate-video', authMiddleware, async (req, res) => {
-  try {
-    return await generateFlirtyVideo(req, res);
-  } catch (err) {
-    if (err.code === 'NO_TOKENS') return res.status(403).json(err);
-    console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
-    await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
-    return res.status(500).json(safeErrorPayload(err));
-  }
+  const { companionId } = req.body;
+  if (!companionId) return res.status(400).json({ error: 'companionId required' });
+  const jobId = createMediaJob('video', req.user.id, companionId);
+  updateMediaJob(jobId, { status: 'processing' });
+  res.json({ success: true, queued: true, job_id: jobId, jobId });
+  setImmediate(async () => {
+    try {
+      const fakeRes = {
+        json(payload) { updateMediaJob(jobId, { status: 'completed', result: payload }); return payload; },
+        status(code) { this._status = code; return this; }
+      };
+      await generateFlirtyVideo(req, fakeRes);
+    } catch (err) {
+      if (err.code !== 'NO_TOKENS') await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
+      console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
+      updateMediaJob(jobId, { status: 'failed', error: safeErrorPayload(err) });
+    }
+  });
 });
 
 

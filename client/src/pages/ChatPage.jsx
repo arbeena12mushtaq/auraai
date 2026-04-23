@@ -142,15 +142,23 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     }
   };
 
-  const recoverLatestMediaMessage = async (expectedType, attempts = 8, delayMs = 1500) => {
+  const recoverLatestMediaMessage = async (expectedType, attempts = 8, delayMs = 1500, startedAt = null, minMessageCount = 0) => {
+    const startedMs = startedAt ? new Date(startedAt).getTime() : 0;
     for (let i = 0; i < attempts; i++) {
       try {
         const d = await api(`/chat/${companion.id}`);
-        const latest = [...(d.messages || [])]
+        const all = d.messages || [];
+        const latest = [...all]
           .reverse()
-          .find(m => m.role === 'assistant' && m.type === expectedType && m.media_url);
+          .find(m => {
+            if (m.role !== 'assistant' || m.type !== expectedType || !m.media_url) return false;
+            const createdMs = m.created_at ? new Date(m.created_at).getTime() : 0;
+            if (startedMs && createdMs && createdMs + 2000 < startedMs) return false;
+            if (minMessageCount && all.length < minMessageCount) return false;
+            return true;
+          });
         if (latest) {
-          setMessages(d.messages || []);
+          setMessages(all);
           return latest;
         }
       } catch (err) {
@@ -159,6 +167,16 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
       await new Promise(r => setTimeout(r, delayMs));
     }
     return null;
+  };
+
+  const waitForMediaJob = async (jobId, maxAttempts = 120, delayMs = 2000) => {
+    for (let i = 0; i < maxAttempts; i++) {
+      const job = await api(`/image/jobs/${jobId}`);
+      if (job.status === 'completed') return job.result || job;
+      if (job.status === 'failed') throw (job.error || { error: 'Media job failed' });
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+    throw { error: 'Media generation is still processing. Please try again in a moment.' };
   };
 
   // ===== Generate Image =====
@@ -170,47 +188,54 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
 
     setMediaLoading('image');
     setMediaProgress(0);
+    const startedAt = new Date().toISOString();
+    const minMessageCount = messages.length + 1;
 
     const interval = setInterval(() => {
-      setMediaProgress(p => Math.min(p + Math.random() * 15, 90));
+      setMediaProgress(p => Math.min(p + Math.random() * 12, 92));
     }, 500);
 
     try {
-      const d = await api('/image/generate-scene', {
+      let d = await api('/image/generate-scene', {
         method: 'POST',
         body: {
           companionId: companion.id,
           context: messages.slice(-4).map(m => m.content).join(' '),
         },
       });
-
-      clearInterval(interval);
-      setMediaProgress(100);
+      if (d.queued && (d.job_id || d.jobId)) {
+        d = await waitForMediaJob(d.job_id || d.jobId, 120, 2000);
+      }
 
       const imageUrl = d.image_url || d.imageUrl || d.media_url || d.url || d.cached_image_url || d?.message?.media_url;
-      if (imageUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'image', content: d.caption || '📸',
-          media_url: imageUrl, created_at: new Date().toISOString(),
-        }]);
-        refreshUser();
-      } else {
-        throw { error: 'Image generated but no image URL was returned' };
-      }
-    } catch (err) {
-      clearInterval(interval);
-      if (err.code === 'NO_TOKENS') {
-        onNavigate('pricing');
-      } else {
-        const recovered = await recoverLatestMediaMessage('image', 12, 2000);
-        if (!recovered) {
-          alert(err.error || err.details?.error || 'Image request timed out or connection dropped. If the image was generated, it should appear in chat shortly.');
-        }
-      }
-    }
+      if (!imageUrl) throw { error: 'Image generated but no image URL was returned' };
 
-    setMediaLoading(null);
-    setMediaProgress(0);
+      setMessages(p => [...p, {
+        role: 'assistant', type: 'image', content: d.caption || '📸',
+        media_url: imageUrl, created_at: new Date().toISOString(),
+      }]);
+      refreshUser();
+    } catch (err) {
+      if (err.code === 'NO_TOKENS') {
+        clearInterval(interval);
+        setMediaLoading(null);
+        setMediaProgress(0);
+        onNavigate('pricing');
+        return;
+      }
+
+      const recovered = await recoverLatestMediaMessage('image', 30, 2000, startedAt, minMessageCount);
+      if (!recovered) {
+        alert(err.error || err.details?.error || 'Image request timed out or connection dropped before the browser got the response.');
+      }
+    } finally {
+      clearInterval(interval);
+      setMediaProgress(100);
+      setTimeout(() => {
+        setMediaLoading(null);
+        setMediaProgress(0);
+      }, 400);
+    }
   };
 
   // ===== Generate Video =====
@@ -222,22 +247,24 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
 
     setMediaLoading('video');
     setMediaProgress(0);
+    const startedAt = new Date().toISOString();
+    const minMessageCount = messages.length + 1;
 
     const interval = setInterval(() => {
-      setMediaProgress(p => Math.min(p + Math.random() * 8, 85));
+      setMediaProgress(p => Math.min(p + Math.random() * 8, 88));
     }, 800);
 
     try {
-      const d = await api('/image/generate-video', {
+      let d = await api('/image/generate-video', {
         method: 'POST',
         body: {
           companionId: companion.id,
           context: messages.slice(-4).map(m => m.content).join(' '),
         },
       });
-
-      clearInterval(interval);
-      setMediaProgress(100);
+      if (d.queued && (d.job_id || d.jobId)) {
+        d = await waitForMediaJob(d.job_id || d.jobId, 180, 2500);
+      }
 
       const videoUrl = d.video_url || d.videoUrl || d.media_url || d.url;
       const imageUrl = d.image_url || d.imageUrl || d.cached_image_url;
@@ -253,21 +280,30 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           media_url: imageUrl, created_at: new Date().toISOString(),
         }]);
         refreshUser();
+      } else {
+        throw { error: 'Video request finished but no media URL was returned' };
       }
     } catch (err) {
-      clearInterval(interval);
-      if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else {
-        const recoveredVideo = await recoverLatestMediaMessage('video');
-        const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image');
-        if (!recoveredVideo && !recoveredImage) {
-          alert(err.error || err.details?.error || 'Video request timed out or connection dropped. If the video was generated, it should appear in chat shortly.');
-        }
+      if (err.code === 'NO_TOKENS') {
+        clearInterval(interval);
+        setMediaLoading(null);
+        setMediaProgress(0);
+        onNavigate('pricing');
+        return;
       }
+      const recoveredVideo = await recoverLatestMediaMessage('video', 35, 2500, startedAt, minMessageCount);
+      const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image', 35, 2500, startedAt, minMessageCount);
+      if (!recoveredVideo && !recoveredImage) {
+        alert(err.error || err.details?.error || 'Video request timed out or connection dropped before the browser got the response.');
+      }
+    } finally {
+      clearInterval(interval);
+      setMediaProgress(100);
+      setTimeout(() => {
+        setMediaLoading(null);
+        setMediaProgress(0);
+      }, 400);
     }
-
-    setMediaLoading(null);
-    setMediaProgress(0);
   };
 
   const fts = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
