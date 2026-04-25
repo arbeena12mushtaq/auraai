@@ -307,6 +307,34 @@ router.post('/generate', authMiddleware, async (req, res) => {
   }
 });
 
+// ===== In-memory job tracking for async generation =====
+const activeJobs = new Map();
+
+function createJob(userId, companionId, type) {
+  const jobId = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = { id: jobId, userId, companionId, type, status: 'processing', startedAt: Date.now(), result: null, error: null };
+  activeJobs.set(jobId, job);
+  // Auto-cleanup after 10 minutes
+  setTimeout(() => activeJobs.delete(jobId), 10 * 60 * 1000);
+  return job;
+}
+
+// Poll endpoint — frontend checks this for job completion
+router.get('/job/:jobId', authMiddleware, (req, res) => {
+  const job = activeJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found or expired' });
+  if (job.userId !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+  if (job.status === 'completed') {
+    activeJobs.delete(job.id);
+    return res.json({ status: 'completed', ...job.result });
+  }
+  if (job.status === 'failed') {
+    activeJobs.delete(job.id);
+    return res.status(500).json({ status: 'failed', error: job.error });
+  }
+  return res.json({ status: 'processing', elapsed: Date.now() - job.startedAt });
+});
+
 router.post('/generate-scene', authMiddleware, async (req, res) => {
   try {
     const { companionId, prompt: userPrompt } = req.body;
@@ -318,38 +346,53 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
 
     await deductTokens(req.user.id, TOKEN_COSTS.image, 'image_gen', `Realistic scene of ${companion.name}`);
 
-    const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
-    console.log('🖼️ Scene source avatar URL:', avatarUrl);
-    console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
-    const cachedImagePath = saveBuffer('scene', result.buffer, '.png');
-    const cachedPublicImageUrl = toAbsolutePublicUrl(cachedImagePath, req) || cachedImagePath;
-    const persistentImageUrl = result?.sourceUrl || cachedPublicImageUrl;
-    console.log('🖼️ Saved scene image path:', cachedImagePath);
-    console.log('🖼️ Saved scene public URL:', cachedPublicImageUrl);
-    console.log('🖼️ Persistent scene URL:', persistentImageUrl);
-    const savedProbe = await checkPublicImageUrl(cachedPublicImageUrl);
-    console.log('🧪 Saved scene URL probe:', savedProbe);
+    // Create a job and return immediately so the frontend doesn't time out
+    const job = createJob(req.user.id, companionId, 'image');
+    res.json({ jobId: job.id, status: 'processing' });
 
-    await pool.query(
-      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
-      [req.user.id, companionId, '📸', persistentImageUrl]
-    );
+    // Process in background (DO NOT await in the request handler)
+    (async () => {
+      try {
+        const { scene, result, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
+        console.log('🖼️ Scene source avatar URL:', avatarUrl);
+        console.log('🖼️ Scene image bytes:', result?.buffer?.length || 0);
 
-    const payload = {
-      success: true,
-      image_url: persistentImageUrl,
-      imageUrl: persistentImageUrl,
-      image_path: cachedImagePath,
-      imagePath: cachedImagePath,
-      cached_image_url: cachedPublicImageUrl,
-      caption: '📸',
-      provider: 'pixazo-runway',
-      model: result.model,
-      scene,
-      mode: 'realistic_scene',
-    };
-    console.log('✅ Scene response payload:', payload);
-    return res.json(payload);
+        // Always prefer the external CDN URL (survives Railway redeploys)
+        const persistentImageUrl = result?.sourceUrl;
+        let fallbackUrl = null;
+        if (!persistentImageUrl) {
+          const cachedImagePath = saveBuffer('scene', result.buffer, '.png');
+          fallbackUrl = toAbsolutePublicUrl(cachedImagePath, req) || cachedImagePath;
+        }
+        const finalImageUrl = persistentImageUrl || fallbackUrl;
+        console.log('🖼️ Final persistent image URL:', finalImageUrl);
+
+        await pool.query(
+          `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'image',$4)`,
+          [req.user.id, companionId, '📸', finalImageUrl]
+        );
+
+        job.status = 'completed';
+        job.result = {
+          success: true,
+          image_url: finalImageUrl,
+          imageUrl: finalImageUrl,
+          caption: '📸',
+          provider: 'pixazo-runway',
+          model: result.model,
+          scene,
+          mode: 'realistic_scene',
+        };
+        console.log('✅ Scene job completed:', job.id);
+      } catch (err) {
+        console.error('Scene job error:', { jobId: job.id, message: err?.message, status: err?.status, body: err?.body || null });
+        job.status = 'failed';
+        job.error = err?.message || 'Image generation failed';
+        // Refund tokens on failure
+        await refundTokens(req.user.id, TOKEN_COSTS.image).catch(() => {});
+      }
+    })();
+
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Scene error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });
@@ -358,73 +401,75 @@ router.post('/generate-scene', authMiddleware, async (req, res) => {
   }
 });
 
-async function generateFlirtyVideo(req, res) {
-  const { companionId, prompt: userPrompt, actionPrompt } = req.body;
-  if (!companionId) return res.status(400).json({ error: 'companionId required' });
-
-  const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
-  if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
-  const companion = comp.rows[0];
-
-  await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Talking realistic video of ${companion.name}`);
-
-  const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
-  console.log('🎞️ Video source avatar URL:', avatarUrl);
-  const tempScenePath = path.join(uploadDir, `vscene-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
-  fs.writeFileSync(tempScenePath, sceneResult.buffer);
-
-  try {
-    const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
-    const absoluteSceneUrl = toAbsolutePublicUrl(sceneImageUrl, req);
-    if (!absoluteSceneUrl) {
-      throw new Error('Could not build a public scene image URL for video generation');
-    }
-    console.log('🎞️ Runway scene image URL:', absoluteSceneUrl);
-
-    const videoResult = await imageToVideo({
-      imageUrl: absoluteSceneUrl,
-      prompt: flirtyVideoPromptForCompanion(companion, scene, actionPrompt),
-    });
-
-    const cachedVideoPath = saveBuffer('video', videoResult.buffer, '.mp4');
-    const cachedPublicVideoUrl = toAbsolutePublicUrl(cachedVideoPath, req) || cachedVideoPath;
-    const persistentVideoUrl = videoResult?.sourceUrl || cachedPublicVideoUrl;
-    console.log('🎞️ Saved video path:', cachedVideoPath);
-    console.log('🎞️ Saved video public URL:', cachedPublicVideoUrl);
-    console.log('🎞️ Persistent video URL:', persistentVideoUrl);
-
-    await pool.query(
-      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
-      [req.user.id, companionId, '🎬', persistentVideoUrl]
-    );
-
-    const payload = {
-      success: true,
-      video_url: persistentVideoUrl,
-      videoUrl: persistentVideoUrl,
-      video_path: cachedVideoPath,
-      scene_image_url: absoluteSceneUrl,
-      scene_image_path: sceneImageUrl,
-      caption: '🎬',
-      provider: 'pixazo-runway',
-      video_model: videoResult.model,
-      image_model: sceneResult.model,
-      scene,
-      mode: 'talking_flirty',
-      has_audio: true,
-      music: false,
-    };
-    console.log('✅ Video response payload:', payload);
-    return res.json(payload);
-  } finally {
-    try { fs.unlinkSync(tempScenePath); } catch {}
-  }
-}
-
-
 router.post('/generate-video', authMiddleware, async (req, res) => {
   try {
-    return await generateFlirtyVideo(req, res);
+    const { companionId, prompt: userPrompt, actionPrompt } = req.body;
+    if (!companionId) return res.status(400).json({ error: 'companionId required' });
+
+    const comp = await pool.query('SELECT * FROM companions WHERE id = $1', [companionId]);
+    if (!comp.rows.length) return res.status(404).json({ error: 'Not found' });
+    const companion = comp.rows[0];
+
+    await deductTokens(req.user.id, TOKEN_COSTS.video, 'video_gen', `Talking realistic video of ${companion.name}`);
+
+    // Create a job and return immediately
+    const job = createJob(req.user.id, companionId, 'video');
+    res.json({ jobId: job.id, status: 'processing' });
+
+    // Process in background
+    (async () => {
+      try {
+        const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
+        console.log('🎞️ Video source avatar URL:', avatarUrl);
+
+        const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
+        const absoluteSceneUrl = toAbsolutePublicUrl(sceneImageUrl, req);
+        if (!absoluteSceneUrl) {
+          throw new Error('Could not build a public scene image URL for video generation');
+        }
+        console.log('🎞️ Runway scene image URL:', absoluteSceneUrl);
+
+        const videoResult = await imageToVideo({
+          imageUrl: absoluteSceneUrl,
+          prompt: flirtyVideoPromptForCompanion(companion, scene, actionPrompt),
+        });
+
+        // Always prefer the external CDN URL
+        const persistentVideoUrl = videoResult?.sourceUrl;
+        let fallbackUrl = null;
+        if (!persistentVideoUrl) {
+          const cachedVideoPath = saveBuffer('video', videoResult.buffer, '.mp4');
+          fallbackUrl = toAbsolutePublicUrl(cachedVideoPath, req) || cachedVideoPath;
+        }
+        const finalVideoUrl = persistentVideoUrl || fallbackUrl;
+        console.log('🎞️ Final persistent video URL:', finalVideoUrl);
+
+        await pool.query(
+          `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'video',$4)`,
+          [req.user.id, companionId, '🎬', finalVideoUrl]
+        );
+
+        job.status = 'completed';
+        job.result = {
+          success: true,
+          video_url: finalVideoUrl,
+          videoUrl: finalVideoUrl,
+          caption: '🎬',
+          provider: 'pixazo-runway',
+          video_model: videoResult.model,
+          image_model: sceneResult.model,
+          scene,
+          mode: 'talking_flirty',
+        };
+        console.log('✅ Video job completed:', job.id);
+      } catch (err) {
+        console.error('Video job error:', { jobId: job.id, message: err?.message, status: err?.status, body: err?.body || null });
+        job.status = 'failed';
+        job.error = err?.message || 'Video generation failed';
+        await refundTokens(req.user.id, TOKEN_COSTS.video).catch(() => {});
+      }
+    })();
+
   } catch (err) {
     if (err.code === 'NO_TOKENS') return res.status(403).json(err);
     console.error('Video error:', { message: err?.message, status: err?.status, body: err?.body || null, stack: err?.stack });

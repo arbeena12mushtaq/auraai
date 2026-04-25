@@ -161,6 +161,31 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     return null;
   };
 
+  // ===== Poll a job until completion =====
+  const pollJob = async (jobId, type, maxMs = 360000) => {
+    const started = Date.now();
+    const delayMs = 3000;
+    while (Date.now() - started < maxMs) {
+      try {
+        const d = await api(`/image/job/${jobId}`);
+        if (d.status === 'completed') return d;
+        if (d.status === 'failed') throw { error: d.error || `${type} generation failed` };
+        // Update progress based on elapsed time
+        const elapsed = d.elapsed || (Date.now() - started);
+        const estimatedTotal = type === 'video' ? 180000 : 90000;
+        setMediaProgress(Math.min(90, (elapsed / estimatedTotal) * 90));
+      } catch (err) {
+        if (err.status === 404) {
+          // Job expired or not found — try recovering from chat history
+          return null;
+        }
+        throw err;
+      }
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+    return null; // Timed out, will try recovery
+  };
+
   // ===== Generate Image =====
   const handleGenerateImage = async () => {
     if (!canUseFeature(user, 'image') && !user?.is_admin) {
@@ -171,12 +196,9 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     setMediaLoading('image');
     setMediaProgress(0);
 
-    const interval = setInterval(() => {
-      setMediaProgress(p => Math.min(p + Math.random() * 15, 90));
-    }, 500);
-
     try {
-      const d = await api('/image/generate-scene', {
+      // Step 1: Start the job (returns immediately)
+      const startRes = await api('/image/generate-scene', {
         method: 'POST',
         body: {
           companionId: companion.id,
@@ -184,27 +206,50 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         },
       });
 
-      clearInterval(interval);
+      if (!startRes.jobId) {
+        // Fallback: old-style direct response (shouldn't happen with new backend)
+        const imageUrl = startRes.image_url || startRes.imageUrl || startRes.media_url;
+        if (imageUrl) {
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'image', content: startRes.caption || '📸',
+            media_url: imageUrl, created_at: new Date().toISOString(),
+          }]);
+          refreshUser();
+        }
+        setMediaLoading(null);
+        setMediaProgress(0);
+        return;
+      }
+
+      // Step 2: Poll for completion
+      const result = await pollJob(startRes.jobId, 'image');
       setMediaProgress(100);
 
-      const imageUrl = d.image_url || d.imageUrl || d.media_url || d.url || d.cached_image_url || d?.message?.media_url;
-      if (imageUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'image', content: d.caption || '📸',
-          media_url: imageUrl, created_at: new Date().toISOString(),
-        }]);
-        refreshUser();
+      if (result) {
+        const imageUrl = result.image_url || result.imageUrl;
+        if (imageUrl) {
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'image', content: result.caption || '📸',
+            media_url: imageUrl, created_at: new Date().toISOString(),
+          }]);
+          refreshUser();
+        } else {
+          throw { error: 'Image generated but no URL was returned' };
+        }
       } else {
-        throw { error: 'Image generated but no image URL was returned' };
+        // Poll timed out — try recovering from DB
+        const recovered = await recoverLatestMediaMessage('image', 15, 3000);
+        if (!recovered) {
+          alert('Image is still generating. Refresh the chat in a moment to see it.');
+        }
       }
     } catch (err) {
-      clearInterval(interval);
       if (err.code === 'NO_TOKENS') {
         onNavigate('pricing');
       } else {
-        const recovered = await recoverLatestMediaMessage('image', 12, 2000);
+        const recovered = await recoverLatestMediaMessage('image', 10, 2500);
         if (!recovered) {
-          alert(err.error || err.details?.error || 'Image request timed out or connection dropped. If the image was generated, it should appear in chat shortly.');
+          alert(err.error || 'Image generation failed. Please try again.');
         }
       }
     }
@@ -223,12 +268,9 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     setMediaLoading('video');
     setMediaProgress(0);
 
-    const interval = setInterval(() => {
-      setMediaProgress(p => Math.min(p + Math.random() * 8, 85));
-    }, 800);
-
     try {
-      const d = await api('/image/generate-video', {
+      // Step 1: Start the job
+      const startRes = await api('/image/generate-video', {
         method: 'POST',
         body: {
           companionId: companion.id,
@@ -236,32 +278,57 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         },
       });
 
-      clearInterval(interval);
+      if (!startRes.jobId) {
+        // Fallback: old-style direct response
+        const videoUrl = startRes.video_url || startRes.videoUrl;
+        const imageUrl = startRes.image_url || startRes.imageUrl;
+        if (videoUrl) {
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'video', content: startRes.caption || '🎬',
+            media_url: videoUrl, created_at: new Date().toISOString(),
+          }]);
+          refreshUser();
+        } else if (imageUrl) {
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'image', content: startRes.caption || '📸',
+            media_url: imageUrl, created_at: new Date().toISOString(),
+          }]);
+          refreshUser();
+        }
+        setMediaLoading(null);
+        setMediaProgress(0);
+        return;
+      }
+
+      // Step 2: Poll for completion (videos take longer)
+      const result = await pollJob(startRes.jobId, 'video', 480000);
       setMediaProgress(100);
 
-      const videoUrl = d.video_url || d.videoUrl || d.media_url || d.url;
-      const imageUrl = d.image_url || d.imageUrl || d.cached_image_url;
-      if (videoUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'video', content: d.caption || '🎬',
-          media_url: videoUrl, created_at: new Date().toISOString(),
-        }]);
-        refreshUser();
-      } else if (imageUrl) {
-        setMessages(p => [...p, {
-          role: 'assistant', type: 'image', content: d.caption || '📸',
-          media_url: imageUrl, created_at: new Date().toISOString(),
-        }]);
-        refreshUser();
+      if (result) {
+        const videoUrl = result.video_url || result.videoUrl;
+        if (videoUrl) {
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'video', content: result.caption || '🎬',
+            media_url: videoUrl, created_at: new Date().toISOString(),
+          }]);
+          refreshUser();
+        } else {
+          throw { error: 'Video generated but no URL was returned' };
+        }
+      } else {
+        const recoveredVideo = await recoverLatestMediaMessage('video', 15, 3000);
+        const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image', 5, 2000);
+        if (!recoveredVideo && !recoveredImage) {
+          alert('Video is still generating. Refresh the chat in a moment to see it.');
+        }
       }
     } catch (err) {
-      clearInterval(interval);
       if (err.code === 'NO_TOKENS') onNavigate('pricing');
       else {
         const recoveredVideo = await recoverLatestMediaMessage('video');
         const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image');
         if (!recoveredVideo && !recoveredImage) {
-          alert(err.error || err.details?.error || 'Video request timed out or connection dropped. If the video was generated, it should appear in chat shortly.');
+          alert(err.error || 'Video generation failed. Please try again.');
         }
       }
     }
@@ -326,7 +393,19 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                     <div className={`aura-chat-bubble ${isUser ? 'aura-chat-bubble-user' : 'aura-chat-bubble-ai'}`}>
                       {/* Image message */}
                       {m.type === 'image' && m.media_url && (
-                        <img src={m.media_url} alt="Generated" className="aura-chat-media-img" />
+                        <img
+                          src={m.media_url}
+                          alt="Generated"
+                          className="aura-chat-media-img"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            const fallback = document.createElement('div');
+                            fallback.textContent = '📸 Image expired — tap to regenerate';
+                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;';
+                            e.target.parentNode.insertBefore(fallback, e.target.nextSibling);
+                          }}
+                        />
                       )}
 
                       {/* Video message */}
@@ -338,6 +417,14 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                           preload="metadata"
                           className="aura-chat-media-video"
                           poster={companion.avatar_url || undefined}
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.style.display = 'none';
+                            const fallback = document.createElement('div');
+                            fallback.textContent = '🎬 Video expired — tap to regenerate';
+                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;';
+                            e.target.parentNode.insertBefore(fallback, e.target.nextSibling);
+                          }}
                         />
                       )}
 
