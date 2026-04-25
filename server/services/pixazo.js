@@ -1,9 +1,9 @@
 const DEFAULT_TIMEOUT_MS = Number(process.env.PIXAZO_TIMEOUT_MS || 300000);
 const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 5000);
 const STATUS_ENDPOINT = process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}';
-const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
+const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-2/v1/nano-banana-2/generate';
 const DEFAULT_VIDEO_ENDPOINT = process.env.PIXAZO_VIDEO_ENDPOINT || 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
-const OFFICIAL_IMAGE_ENDPOINT = 'https://gateway.pixazo.ai/nano-banana-pro-770/v1/nano-banana-pro-request';
+const OFFICIAL_IMAGE_ENDPOINT = 'https://gateway.pixazo.ai/nano-banana-2/v1/nano-banana-2/generate';
 const OFFICIAL_VIDEO_ENDPOINT = 'https://gateway.pixazo.ai/runway-gen-4-5/v1/gen-4.5/generate';
 
 function getApiKey() {
@@ -48,15 +48,17 @@ async function parseJsonResponse(res) {
 }
 
 function extractMediaUrl(payload) {
-  return payload?.output?.media_url?.[0]
-    || payload?.output?.url
-    || payload?.output
-    || payload?.output_url
-    || payload?.video_url
-    || payload?.image_url
-    || payload?.media_url?.[0]
-    || payload?.url
-    || null;
+  const candidates = [
+    payload?.output?.media_url?.[0],
+    payload?.output?.url,
+    typeof payload?.output === 'string' ? payload.output : null,  // only if output is a URL string
+    payload?.output_url,
+    payload?.video_url,
+    payload?.image_url,
+    payload?.media_url?.[0],
+    payload?.url,
+  ];
+  return candidates.find(c => typeof c === 'string' && c.startsWith('http')) || null;
 }
 
 function extractDataUri(payload) {
@@ -182,42 +184,38 @@ async function pollForCompletion(requestId, pollingUrl) {
 
 async function imageToImage({ imageUrl, prompt }) {
   if (!imageUrl) throw new Error('imageUrl is required for Pixazo image-to-image');
+
+  // Nano Banana 2 API format (always async — no sync_mode)
   const body = {
     prompt,
-    image_urls: [imageUrl],
+    image_input: [imageUrl],                                       // was: image_urls
     aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '16:9',
     resolution: process.env.PIXAZO_IMAGE_RESOLUTION || '2K',
     output_format: process.env.PIXAZO_IMAGE_OUTPUT_FORMAT || 'png',
-    sync_mode: String(process.env.PIXAZO_IMAGE_SYNC_MODE || 'true').toLowerCase() === 'true',
-    num_images: 1,
-    limit_generations: true,
+    // Removed: sync_mode, num_images, limit_generations (not in new API)
   };
 
+  console.log('📤 Pixazo image request body:', JSON.stringify(body, null, 2));
   const payload = await postJsonWithFallback([DEFAULT_IMAGE_ENDPOINT, OFFICIAL_IMAGE_ENDPOINT], body, 'image');
+  console.log('📥 Pixazo image response:', JSON.stringify(payload, null, 2));
 
-  const dataUri = extractDataUri(payload);
-  if (dataUri) {
-    const decoded = decodeDataUri(dataUri);
-    if (decoded?.buffer?.length) {
-      return { ...decoded, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: null };
-    }
-  }
-
-  const immediateMediaUrl = extractMediaUrl(payload);
-  if (immediateMediaUrl && !payload?.request_id) {
-    const file = await downloadToBuffer(immediateMediaUrl);
-    return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: immediateMediaUrl };
-  }
-
+  // Nano Banana 2 always returns request_id + polling_url (async only)
   const requestId = payload?.request_id;
   if (!requestId) {
+    // Fallback: check if there's a direct media URL (shouldn't happen with new API)
+    const immediateMediaUrl = extractMediaUrl(payload);
+    if (immediateMediaUrl) {
+      const file = await downloadToBuffer(immediateMediaUrl);
+      return { ...file, payload, model: 'nano-banana-2', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: immediateMediaUrl };
+    }
     const err = new Error('Pixazo image request did not return request_id or direct output');
     err.body = payload;
     throw err;
   }
+
   const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
   const file = await downloadToBuffer(mediaUrl);
-  return { ...file, payload, model: 'nano-banana-pro-770', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: mediaUrl };
+  return { ...file, payload, model: 'nano-banana-2', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: mediaUrl };
 }
 
 async function imageToVideo({ imageUrl, prompt }) {
