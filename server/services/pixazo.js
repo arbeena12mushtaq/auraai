@@ -1,4 +1,4 @@
-const DEFAULT_TIMEOUT_MS = Number(process.env.PIXAZO_TIMEOUT_MS || 300000);
+const DEFAULT_TIMEOUT_MS = Number(process.env.PIXAZO_TIMEOUT_MS || 600000);
 const POLL_INTERVAL_MS = Number(process.env.PIXAZO_POLL_INTERVAL_MS || 5000);
 const STATUS_ENDPOINT = process.env.PIXAZO_STATUS_ENDPOINT || 'https://gateway.pixazo.ai/v2/requests/status/{request_id}';
 const DEFAULT_IMAGE_ENDPOINT = process.env.PIXAZO_IMAGE_ENDPOINT || 'https://gateway.pixazo.ai/nano-banana-2/v1/nano-banana-2/generate';
@@ -157,29 +157,41 @@ function statusUrlFor(requestId, pollingUrl) {
   return STATUS_ENDPOINT.replace('{request_id}', encodeURIComponent(requestId));
 }
 
-async function pollForCompletion(requestId, pollingUrl) {
+async function pollForCompletion(requestId, pollingUrl, label = 'media') {
   const started = Date.now();
   const url = statusUrlFor(requestId, pollingUrl);
+  let pollCount = 0;
   while (Date.now() - started < DEFAULT_TIMEOUT_MS) {
-    const data = await getJson(url);
-    const status = String(data?.status || '').toUpperCase();
-    if (status === 'COMPLETED' || status === 'SUCCEEDED') {
-      const mediaUrl = extractMediaUrl(data);
-      if (!mediaUrl) {
-        const err = new Error('Pixazo completed without media URL');
+    pollCount++;
+    try {
+      const data = await getJson(url);
+      const status = String(data?.status || '').toUpperCase();
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      console.log(`🔄 Poll #${pollCount} [${label}] (${elapsed}s): status=${status}, requestId=${requestId}`);
+      
+      if (status === 'COMPLETED' || status === 'SUCCEEDED') {
+        const mediaUrl = extractMediaUrl(data);
+        if (!mediaUrl) {
+          const err = new Error('Pixazo completed without media URL');
+          err.body = data;
+          throw err;
+        }
+        console.log(`✅ Poll complete [${label}]: ${mediaUrl}`);
+        return mediaUrl;
+      }
+      if (status === 'FAILED' || status === 'ERROR' || status === 'CANCELLED') {
+        const err = new Error(`Pixazo job failed: ${data?.error || data?.message || 'Unknown error'}`);
         err.body = data;
         throw err;
       }
-      return mediaUrl;
-    }
-    if (status === 'FAILED' || status === 'ERROR' || status === 'CANCELLED') {
-      const err = new Error(`Pixazo job failed: ${data?.error || data?.message || 'Unknown error'}`);
-      err.body = data;
-      throw err;
+    } catch (err) {
+      // Re-throw non-polling errors (actual failures)
+      if (err.message?.includes('Pixazo job failed') || err.message?.includes('completed without media')) throw err;
+      console.error(`⚠️ Poll #${pollCount} [${label}] network error:`, err.message);
     }
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  throw new Error('Pixazo polling timed out');
+  throw new Error(`Pixazo polling timed out after ${Math.round(DEFAULT_TIMEOUT_MS/1000)}s (${pollCount} polls)`);
 }
 
 async function imageToImage({ imageUrl, prompt }) {
@@ -213,7 +225,7 @@ async function imageToImage({ imageUrl, prompt }) {
     throw err;
   }
 
-  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
+  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url, 'image');
   const file = await downloadToBuffer(mediaUrl);
   return { ...file, payload, model: 'nano-banana-2', endpoint: DEFAULT_IMAGE_ENDPOINT, sourceUrl: mediaUrl };
 }
@@ -232,14 +244,16 @@ async function imageToVideo({ imageUrl, prompt }) {
   };
   if (seedRaw !== undefined && seedRaw !== '') body.seed = Number(seedRaw);
 
+  console.log('📤 Pixazo video request body:', JSON.stringify(body, null, 2));
   const payload = await postJsonWithFallback([DEFAULT_VIDEO_ENDPOINT, OFFICIAL_VIDEO_ENDPOINT], body, 'video');
+  console.log('📥 Pixazo video response:', JSON.stringify(payload, null, 2));
   const requestId = payload?.request_id;
   if (!requestId) {
     const err = new Error('Runway request did not return request_id');
     err.body = payload;
     throw err;
   }
-  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url);
+  const mediaUrl = await pollForCompletion(requestId, payload?.polling_url, 'video');
   const file = await downloadToBuffer(mediaUrl);
   return { ...file, payload, model: 'runway-gen-4-5', endpoint: DEFAULT_VIDEO_ENDPOINT, sourceUrl: mediaUrl };
 }

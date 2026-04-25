@@ -422,15 +422,21 @@ router.post('/generate-video', authMiddleware, async (req, res) => {
         const { scene, result: sceneResult, avatarUrl } = await createSceneFromAvatar(companion, userPrompt || req.body.context || '', req);
         console.log('🎞️ Video source avatar URL:', avatarUrl);
 
-        const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
-        const absoluteSceneUrl = toAbsolutePublicUrl(sceneImageUrl, req);
-        if (!absoluteSceneUrl) {
+        // Prefer the Pixazo CDN URL for the scene image — Runway fetches from CDN much more reliably
+        // than from our Railway instance (which may be slow or behind a proxy)
+        let sceneImageForRunway = sceneResult?.sourceUrl;
+        if (!sceneImageForRunway) {
+          // Fallback to local if no CDN URL (shouldn't happen with Nano Banana 2)
+          const sceneImageUrl = saveBuffer('scene', sceneResult.buffer, '.png');
+          sceneImageForRunway = toAbsolutePublicUrl(sceneImageUrl, req);
+        }
+        if (!sceneImageForRunway) {
           throw new Error('Could not build a public scene image URL for video generation');
         }
-        console.log('🎞️ Runway scene image URL:', absoluteSceneUrl);
+        console.log('🎞️ Runway scene image URL:', sceneImageForRunway);
 
         const videoResult = await imageToVideo({
-          imageUrl: absoluteSceneUrl,
+          imageUrl: sceneImageForRunway,
           prompt: flirtyVideoPromptForCompanion(companion, scene, actionPrompt),
         });
 

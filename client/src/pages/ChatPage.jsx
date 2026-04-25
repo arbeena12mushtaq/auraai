@@ -162,7 +162,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
   };
 
   // ===== Poll a job until completion =====
-  const pollJob = async (jobId, type, maxMs = 360000) => {
+  const pollJob = async (jobId, type, maxMs = 660000) => {
     const started = Date.now();
     const delayMs = 3000;
     while (Date.now() - started < maxMs) {
@@ -491,7 +491,9 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                     <div className="aura-chat-media-progress-bar">
                       <div className="aura-chat-media-progress-fill" style={{ width: `${mediaProgress}%` }} />
                     </div>
-                    <div className="aura-chat-media-progress-pct">{Math.round(mediaProgress)}% • This might take a few seconds</div>
+                    <div className="aura-chat-media-progress-pct">
+                      {Math.round(mediaProgress)}% • {mediaLoading === 'video' ? 'This may take 2-5 minutes' : 'This might take a minute'}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -787,11 +789,13 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
             z-index: 60;
             height: 100vh;
             height: 100dvh;
+            padding-top: 0;
           }
 
           .aura-chat-header {
             padding: 8px 10px; gap: 8px;
             min-height: 48px;
+            padding-top: max(8px, env(safe-area-inset-top));
           }
           .aura-chat-header-avatar { width: 36px; height: 36px; }
           .aura-chat-header-avatar img { width: 36px; height: 36px; }
@@ -799,14 +803,14 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           .aura-chat-header-status { font-size: 11px; }
 
           .aura-chat-messages { padding: 10px 10px; }
-          .aura-chat-msg { max-width: 88%; }
+          .aura-chat-msg { max-width: 85%; }
           .aura-chat-bubble { padding: 8px 12px; border-radius: 14px; }
           .aura-chat-bubble-text { font-size: 13px; }
 
           .aura-chat-media-img,
           .aura-chat-media-video {
             width: 100%;
-            max-width: 240px;
+            max-width: 100%;
             border-radius: 10px;
           }
 
@@ -818,9 +822,12 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           .aura-chat-msg-avatar { width: 26px; height: 26px; }
           .aura-chat-msg-avatar img { width: 26px; height: 26px; }
 
-          .aura-chat-input-bar { padding: 6px 8px; }
+          .aura-chat-input-bar {
+            padding: 6px 8px;
+            padding-bottom: max(6px, env(safe-area-inset-bottom));
+          }
           .aura-chat-input-row { gap: 6px; }
-          .aura-chat-text-input { padding: 8px 14px; font-size: 13px; }
+          .aura-chat-text-input { padding: 8px 14px; font-size: 14px; }
           .aura-chat-send-btn,
           .aura-chat-mic-btn { width: 36px; height: 36px; }
           .aura-chat-send-btn svg,
@@ -852,10 +859,10 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           .aura-chat-bubble-text { font-size: 12px; }
 
           .aura-chat-media-img,
-          .aura-chat-media-video { max-width: 200px; }
+          .aura-chat-media-video { max-width: 100%; }
 
           .aura-chat-input-bar { padding: 4px 6px; }
-          .aura-chat-text-input { padding: 7px 12px; font-size: 12px; }
+          .aura-chat-text-input { padding: 7px 12px; font-size: 13px; }
           .aura-chat-send-btn,
           .aura-chat-mic-btn { width: 32px; height: 32px; }
 
@@ -867,13 +874,13 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         @media (min-width: 769px) and (max-width: 1024px) {
           .aura-chat-msg { max-width: 70%; }
           .aura-chat-media-img,
-          .aura-chat-media-video { width: 260px; }
+          .aura-chat-media-video { width: 280px; }
         }
 
         @media (min-width: 1025px) {
           .aura-chat-msg { max-width: 60%; }
           .aura-chat-media-img,
-          .aura-chat-media-video { width: 300px; }
+          .aura-chat-media-video { width: 320px; }
         }
       `}</style>
     </div>
