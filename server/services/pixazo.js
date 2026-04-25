@@ -201,7 +201,7 @@ async function imageToImage({ imageUrl, prompt }) {
   const body = {
     prompt,
     image_input: [imageUrl],                                       // was: image_urls
-    aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '16:9',
+    aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '9:16',
     resolution: process.env.PIXAZO_IMAGE_RESOLUTION || '2K',
     output_format: process.env.PIXAZO_IMAGE_OUTPUT_FORMAT || 'png',
     // Removed: sync_mode, num_images, limit_generations (not in new API)
@@ -240,7 +240,7 @@ async function imageToVideo({ imageUrl, prompt }) {
     prompt,
     image: imageUrl,
     duration,
-    aspect_ratio: process.env.PIXAZO_VIDEO_ASPECT_RATIO || '16:9',
+    aspect_ratio: process.env.PIXAZO_VIDEO_ASPECT_RATIO || '9:16',
   };
   if (seedRaw !== undefined && seedRaw !== '') body.seed = Number(seedRaw);
 

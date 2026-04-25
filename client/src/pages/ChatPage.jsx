@@ -657,15 +657,17 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         /* === MEDIA === */
         .aura-chat-media-img {
           max-width: 100%;
-          width: 280px;
+          width: 220px;
           border-radius: 12px;
           display: block;
           margin-bottom: 6px;
           height: auto;
+          aspect-ratio: 9/16;
+          object-fit: cover;
         }
         .aura-chat-media-video {
           max-width: 100%;
-          width: 280px;
+          width: 220px;
           border-radius: 12px;
           display: block;
           margin-bottom: 6px;
@@ -874,13 +876,13 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         @media (min-width: 769px) and (max-width: 1024px) {
           .aura-chat-msg { max-width: 70%; }
           .aura-chat-media-img,
-          .aura-chat-media-video { width: 280px; }
+          .aura-chat-media-video { width: 200px; }
         }
 
         @media (min-width: 1025px) {
           .aura-chat-msg { max-width: 60%; }
           .aura-chat-media-img,
-          .aura-chat-media-video { width: 320px; }
+          .aura-chat-media-video { width: 240px; }
         }
       `}</style>
     </div>
