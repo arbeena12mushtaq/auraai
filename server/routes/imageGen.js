@@ -45,44 +45,42 @@ function sanitizePrompt(text) {
 }
 
 function getRandomRealisticScene() {
-  // Backgrounds only — the character stays the same, only the environment changes
-  const backgrounds = [
-    { bg: 'cozy coffee shop interior, warm ambient lighting, blurred cafe background', vibe: 'casual coffee date' },
-    { bg: 'bedroom with soft morning sunlight through sheer curtains, cozy bed in background', vibe: 'lazy morning' },
-    { bg: 'modern apartment living room, soft daylight, minimalist decor blurred behind', vibe: 'chill at home' },
-    { bg: 'rooftop at night, city skyline lights bokeh in background', vibe: 'night out' },
-    { bg: 'beach at golden hour, ocean waves softly blurred behind', vibe: 'beach sunset' },
-    { bg: 'car interior, dashboard lights, evening drive', vibe: 'going somewhere fun' },
-    { bg: 'bathroom mirror, warm vanity lighting, getting ready', vibe: 'getting ready' },
-    { bg: 'garden with colorful flowers, soft natural sunlight', vibe: 'outdoor walk' },
-    { bg: 'restaurant booth, dim romantic candle lighting, blurred background', vibe: 'dinner date' },
-    { bg: 'gym or yoga studio, natural light, workout setting', vibe: 'active day' },
-    { bg: 'balcony with fairy lights, evening sky behind', vibe: 'cozy evening' },
-    { bg: 'hotel room, luxury bedding, soft warm lamp light', vibe: 'travel vibes' },
+  const scenes = [
+    { bg: 'luxury bedroom, soft morning sunlight through sheer curtains, messy silk sheets behind', outfit: 'silky fitted camisole top, elegant and attractive' },
+    { bg: 'modern bathroom, warm vanity mirror lighting, getting ready', outfit: 'off-shoulder fitted top, hair down, fresh and stunning' },
+    { bg: 'cozy living room sofa, warm lamp lighting, relaxed evening', outfit: 'oversized sweater falling off one shoulder, cozy but attractive' },
+    { bg: 'rooftop at night, city skyline bokeh lights behind', outfit: 'sleek black mini dress, bold glamorous look' },
+    { bg: 'beach at golden hour, warm ocean sunset behind', outfit: 'stylish bikini top with sheer coverup, beach glamour' },
+    { bg: 'luxury car passenger seat, soft dashboard lighting', outfit: 'fitted leather jacket over low-cut top, confident style' },
+    { bg: 'swimming pool edge, bright sunny day, turquoise water', outfit: 'glamorous one-piece swimsuit, resort chic' },
+    { bg: 'restaurant booth, dim romantic candlelight', outfit: 'form-fitting cocktail dress, deep neckline, elegant jewelry' },
+    { bg: 'hotel room balcony, sunset sky behind, fairy lights', outfit: 'silky robe slightly open, relaxed luxury' },
+    { bg: 'fitness studio, natural light, workout setting', outfit: 'fitted sports bra and leggings, athletic and toned' },
+    { bg: 'garden with roses, soft golden hour sunlight', outfit: 'flowy sundress, feminine and romantic' },
+    { bg: 'nightclub VIP area, neon and ambient lighting', outfit: 'sparkly fitted top, bold party look, smoky eye makeup' },
   ];
 
-  // All cameras are selfie-style — phone held by the person, front-facing
   const cameras = [
-    'selfie taken with phone held at arm length, slightly above eye level, front-facing camera, natural phone photo look',
-    'close-up selfie, phone held close, face filling most of the frame, warm smile, direct eye contact with camera',
-    'selfie angle from slightly above, one hand holding phone, head slightly tilted, flirty expression',
-    'mirror selfie style, phone visible in reflection, casual pose, looking at phone screen',
-    'video call framing, face and upper chest visible, looking directly into camera lens, phone propped up',
-    'selfie with phone held at chest level, looking down at camera, soft expression, intimate angle',
+    'selfie angle, phone held at arm length slightly above eye level, looking up at camera through lashes, front-facing phone camera',
+    'close-up selfie, phone very close to face, pouty lips, direct flirty eye contact, front camera phone',
+    'mirror selfie, phone visible in reflection, full body pose, one hip out, confident stance',
+    'selfie from slightly below chin level, looking down at camera, seductive angle, soft expression',
+    'video call framing, face and chest visible, leaning slightly forward toward camera, inviting expression',
+    'selfie with head tilted, hair falling to one side, playful smile, phone at eye level',
   ];
 
   const moods = [
-    'flirty and playful, slight smile, eyes inviting',
-    'warm and intimate, soft gaze, gentle smile',
-    'confident and teasing, one eyebrow slightly raised, smirk',
-    'shy and sweet, looking through lashes, blushing',
-    'relaxed and natural, genuine laugh, candid moment',
+    'flirty and playful, biting lower lip slightly, eyes teasing',
+    'sultry and confident, half-smile, intense eye contact',
+    'sweet and inviting, warm genuine smile, soft gaze',
+    'bold and seductive, smoldering look, slight smirk',
+    'cute and coy, looking through lashes, shy smile',
   ];
 
-  const bg = backgrounds[Math.floor(Math.random() * backgrounds.length)];
+  const scene = scenes[Math.floor(Math.random() * scenes.length)];
   return {
-    setting: bg.bg,
-    vibe: bg.vibe,
+    setting: scene.bg,
+    outfit: scene.outfit,
     camera: cameras[Math.floor(Math.random() * cameras.length)],
     mood: moods[Math.floor(Math.random() * moods.length)],
   };
@@ -91,13 +89,13 @@ function getRandomRealisticScene() {
 function getRandomFlirtyDialogue() {
   const lines = [
     'hey you... i was just thinking about you. what are you doing right now?',
-    'okay be honest... do you like this look on me? i tried something new.',
-    'i wish you were here right now... it would be so much better with you.',
-    'stop making me smile like this... you are too cute, you know that?',
-    'guess what... i have a surprise for you later. you will love it.',
-    'hey... i just woke up and you were the first thing on my mind.',
-    'come closer... i want to tell you something. are you listening?',
-    'you always know how to make my day better. how do you do that?',
+    'do you like what you see? i dressed up just for you.',
+    'i wish you were here with me right now... it would be so much better.',
+    'stop making me blush... you are too much, you know that?',
+    'come closer to the screen... i want to whisper something to you.',
+    'i just got out of the shower and you popped into my head... weird right?',
+    'are you watching me? good... because i like when you look at me.',
+    'you always know how to make me feel special. how do you do that?',
   ];
   return lines[Math.floor(Math.random() * lines.length)];
 }
@@ -187,15 +185,14 @@ function scenePromptForCompanion(companion, scene, userPrompt = '') {
   const extra = sanitizePrompt(userPrompt || '');
 
   return [
-    `IMPORTANT: Keep the EXACT same person from the source image. Same face, same eyes, same lips, same nose, same skin tone, same hair color, same hairstyle. Do NOT change the person's identity at all.`,
-    `This is a selfie photo taken by ${character} on their phone camera.`,
+    `Keep the EXACT same person from the source image. Same face, same eyes, same skin tone, same hair.`,
+    `Change the clothes to: ${scene.outfit}.`,
+    `Change the background to: ${scene.setting}.`,
     `Camera: ${scene.camera}.`,
-    `Background: ${scene.setting}.`,
-    `Expression and mood: ${scene.mood}.`,
-    `The person is looking directly at the front-facing phone camera as if taking a selfie or on a video call.`,
-    extra ? `Additional context: ${extra}.` : '',
-    'Style: photorealistic, natural phone camera quality, slight phone camera lens distortion, realistic skin texture, natural lighting from the environment.',
-    'Rules: keep the EXACT same person from the input image, only change the background and lighting. Do not change face, hair, body, or identity. No fantasy elements, no wings, no crowns, no armor. Keep fully clothed. No text, no watermark.',
+    `Expression: ${scene.mood}.`,
+    extra ? `Additional: ${extra}.` : '',
+    'Photorealistic, natural skin texture, realistic lighting, high detail.',
+    'Do not change the face or identity. No fantasy elements, no wings, no crowns, no armor. No text, no watermark.',
   ].filter(Boolean).join(' ');
 }
 
@@ -203,15 +200,15 @@ function flirtyVideoPromptForCompanion(companion, scene, actionPrompt = '') {
   const character = buildCharacterSummary(companion);
   const spokenLine = sanitizePrompt(actionPrompt || getRandomFlirtyDialogue());
   return [
-    `IMPORTANT: Keep the EXACT same person from the source image throughout the entire video. Do not change their face, hair, or identity at all.`,
-    `This is a selfie-style video of ${character} recording themselves on their front-facing phone camera.`,
-    `The person is holding their phone at arm's length or has it propped up, looking directly into the camera like a video call or selfie video.`,
+    `Keep the EXACT same person from the source image throughout the entire video.`,
+    `Selfie video: the person is holding their phone front-camera, recording themselves.`,
+    `Outfit: ${scene.outfit}.`,
     `Background: ${scene.setting}.`,
-    `Mood: ${scene.mood}.`,
-    `The person speaks directly to the camera in a warm, flirty, natural tone, saying: "${spokenLine}".`,
-    'Natural movements: subtle head tilts, genuine smiling, natural blinking, slight hair touching, soft breathing, playful eye contact with the camera.',
-    'Camera feel: slight phone handheld movement, natural selfie video look, front-facing camera perspective, intimate close framing.',
-    'Keep the exact same person as the source image. Ultra realistic, natural motion, no text overlays, no subtitles, no watermark, no fantasy elements, fully clothed.',
+    `Expression: ${scene.mood}.`,
+    `They speak directly to camera in a flirty natural tone: "${spokenLine}".`,
+    'Natural selfie video movements: head tilts, hair touching, lip biting, smiling, blinking, playful eye contact.',
+    'Phone camera feel: slight handheld shake, front-facing camera perspective, intimate close framing.',
+    'Same person as source image. Ultra realistic, no text, no watermark, no fantasy elements.',
   ].join(' ');
 }
 
