@@ -73,7 +73,7 @@ async function callOpenAI(systemPrompt, messages) {
 router.get('/:companionId', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM messages WHERE user_id = $1 AND companion_id = $2 ORDER BY created_at ASC LIMIT 50`,
+      `SELECT * FROM messages WHERE user_id = $1 AND companion_id = $2 ORDER BY created_at ASC LIMIT 200`,
       [req.user.id, req.params.companionId]
     );
     res.json({ messages: result.rows });

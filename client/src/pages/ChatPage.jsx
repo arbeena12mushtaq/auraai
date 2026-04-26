@@ -76,7 +76,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         const blob = new Blob(chunks, { type: 'audio/webm' });
         const userAudioUrl = URL.createObjectURL(blob);
 
-        // Show user's audio message immediately
+        // Show user's audio message immediately (local preview)
         setMessages(prev => [...prev, { role: 'user', content: '🎤 Voice message', type: 'audio', media_url: userAudioUrl, created_at: new Date().toISOString() }]);
         setLoading(true);
 
@@ -93,7 +93,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           const sttData = await sttRes.json();
           const transcribedText = sttData.text || 'Hello';
 
-          // Step 2: Send transcribed text to chat AI — FIXED: use 'content' not 'message'
+          // Step 2: Send transcribed text to chat AI (this saves both user + AI text messages in DB)
           const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: transcribedText } });
 
           if (data.message?.content) {
@@ -110,14 +110,20 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
               if (ttsRes.ok) {
                 const ttsData = await ttsRes.json();
                 if (ttsData.audio_url) {
-                  // TTS returns a URL path — use it directly
+                  // Save audio message to DB for persistence
+                  try {
+                    await api(`/voice/save`, {
+                      method: 'POST',
+                      body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content },
+                    });
+                  } catch (e) { console.warn('Failed to save voice msg to DB:', e); }
+
                   setMessages(prev => [...prev, {
-                    role: 'assistant', content: data.message.content,
+                    role: 'assistant', content: '🔊',
                     type: 'audio', media_url: ttsData.audio_url,
                     created_at: new Date().toISOString()
                   }]);
                 } else {
-                  // Fallback: show text
                   setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
                 }
               } else {
@@ -435,11 +441,12 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                         </div>
                       )}
 
-                      {/* Text — hide emoji-only captions for media types */}
+                      {/* Text — hide emoji-only captions for media types, hide text for voice messages */}
                       {m.content
+                        && m.type !== 'audio'
+                        && m.type !== 'vn'
                         && !(m.type === 'image' && m.content === '📸')
                         && !(m.type === 'video' && m.content === '🎬')
-                        && !((m.type === 'audio' || m.type === 'vn') && (m.content === '🎤 Voice message' || m.content === '🔊 Voice reply'))
                         && (
                         <div className="aura-chat-bubble-text">{m.content}</div>
                       )}

@@ -146,7 +146,16 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           <div className="form-label" style={{ marginTop: 16 }}>Description *</div>
           <textarea className="input" style={{ minHeight: 120 }}
             placeholder={"Describe how your companion looks and who they are.\n\ne.g. 'A cheerful woman with long wavy brown hair, freckles, and green eyes. She has a warm smile and loves wearing cozy sweaters. She's the kind of person who lights up a room.'"}
-            value={form.description} onChange={e => set('description', e.target.value)} />
+            value={form.description} onChange={e => {
+              const val = e.target.value;
+              set('description', val);
+              // Auto-detect anime keywords and switch art style
+              const animeKeywords = /\b(anime|manga|waifu|kawaii|neko|catgirl|fox girl|demon girl|elf girl|dragon girl|chibi|tsundere|yandere|senpai)\b/i;
+              if (animeKeywords.test(val) && form.art_style !== 'Anime') {
+                set('art_style', 'Anime');
+                if (form.category !== 'Anime') set('category', 'Anime');
+              }
+            }} />
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             This description will be used to generate the avatar and shape their personality.
           </div>
