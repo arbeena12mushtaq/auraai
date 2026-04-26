@@ -33,12 +33,7 @@ function refundTokens(userId, amount) {
 
 function sanitizePrompt(text) {
   return (text || '')
-    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx|sexual|erotic)\b/gi, '')
-    .replace(/\bsexy\b/gi, 'glamorous')
-    .replace(/\bhot\b/gi, 'stunning')
-    .replace(/\bseductive\b/gi, 'elegant')
-    .replace(/\bsensual\b/gi, 'refined')
-    .replace(/\balluring\b/gi, 'stylish')
+    .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx)\b/gi, '')
     .replace(/\bsuccubus\b/gi, 'winged gothic character')
     .replace(/\s+/g, ' ')
     .trim();
@@ -197,19 +192,8 @@ function scenePromptForCompanion(companion, scene, userPrompt = '') {
 }
 
 function flirtyVideoPromptForCompanion(companion, scene, actionPrompt = '') {
-  const character = buildCharacterSummary(companion);
   const spokenLine = sanitizePrompt(actionPrompt || getRandomFlirtyDialogue());
-  return [
-    `Keep the EXACT same person from the source image throughout the entire video.`,
-    `Selfie video: the person is holding their phone front-camera, recording themselves.`,
-    `Outfit: ${scene.outfit}.`,
-    `Background: ${scene.setting}.`,
-    `Expression: ${scene.mood}.`,
-    `They speak directly to camera in a flirty natural tone: "${spokenLine}".`,
-    'Natural selfie video movements: head tilts, hair touching, lip biting, smiling, blinking, playful eye contact.',
-    'Phone camera feel: slight handheld shake, front-facing camera perspective, intimate close framing.',
-    'Same person as source image. Ultra realistic, no text, no watermark, no fantasy elements.',
-  ].join(' ');
+  return `Selfie video, same person as source image. ${scene.outfit}. Background: ${scene.setting}. Looking at front camera, ${scene.mood}. Speaking to camera: "${spokenLine}". Natural head tilts, smiling, hair play, lip bite, eye contact. Phone selfie handheld feel. Photorealistic.`;
 }
 
 
@@ -288,22 +272,48 @@ router.post('/generate', authMiddleware, async (req, res) => {
     const desc = sanitizePrompt(req.body.description);
 
     const prompt = isAnime
-      ? `anime character portrait, ${gender}, ${desc}, polished anime art, vibrant colors, detailed eyes, front facing, looking at camera`
-      : `photorealistic portrait of a ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin, front facing, looking at camera, high resolution`;
+      ? `anime character portrait of a ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
+      : `photorealistic close-up portrait of a beautiful ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
-    const imageBuffer = await generateWithPollinations(prompt);
-    if (!imageBuffer) {
-      return res.status(503).json({ error: 'Avatar generation provider is temporarily unavailable. Please try again in a moment.' });
+    // Use Pixazo Nano Banana 2 for avatar generation (text-to-image, no reference image)
+    const body = {
+      prompt,
+      aspect_ratio: '1:1',
+      resolution: '2K',
+      output_format: 'png',
+    };
+
+    console.log('📤 Avatar gen request:', JSON.stringify(body, null, 2));
+
+    const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
+            DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint, extractMediaUrl: extractUrl } = require('../services/pixazo');
+
+    const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
+    console.log('📥 Avatar gen response:', JSON.stringify(payload, null, 2));
+
+    const requestId = payload?.request_id;
+    if (!requestId) {
+      // Check for immediate result
+      const immediateUrl = extractUrl(payload);
+      if (immediateUrl) {
+        const file = await dlBuffer(immediateUrl);
+        const previewUrl = saveBuffer('gen', file.buffer, '.png');
+        const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+        return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: immediateUrl, provider: 'pixazo-nano-banana-2' });
+      }
+      return res.status(503).json({ error: 'Avatar generation failed — no request ID returned' });
     }
 
-    const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
+    const mediaUrl = await pollAvatar(requestId, payload?.polling_url, 'avatar');
+    const file = await dlBuffer(mediaUrl);
+    const previewUrl = saveBuffer('gen', file.buffer, '.png');
     const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-    console.log('✅ Generated avatar preview URL:', absolutePreviewUrl);
-    console.log('✅ Generated avatar source URL:', imageBuffer.sourceUrl);
-    return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
+    console.log('✅ Generated avatar via Nano Banana 2:', absolutePreviewUrl);
+    console.log('✅ Avatar CDN URL:', mediaUrl);
+    return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
   } catch (err) {
-    console.error('Avatar error:', err);
-    return res.status(500).json({ error: 'Failed to generate avatar' });
+    console.error('Avatar error:', err?.message, err?.body);
+    return res.status(500).json({ error: err?.message || 'Failed to generate avatar' });
   }
 });
 

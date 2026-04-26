@@ -236,13 +236,15 @@ async function imageToVideo({ imageUrl, prompt }) {
   if (![5, 10].includes(duration)) throw new Error('PIXAZO_VIDEO_DURATION must be 5 or 10 for Runway Gen-4.5');
 
   const seedRaw = process.env.PIXAZO_VIDEO_SEED;
+  const aspectRatio = process.env.PIXAZO_VIDEO_ASPECT_RATIO || '9:16';
   const body = {
     prompt,
     image: imageUrl,
     duration,
-    aspect_ratio: process.env.PIXAZO_VIDEO_ASPECT_RATIO || '9:16',
+    aspect_ratio: aspectRatio,
   };
   if (seedRaw !== undefined && seedRaw !== '') body.seed = Number(seedRaw);
+  console.log('🎬 Video aspect ratio:', aspectRatio);
 
   console.log('📤 Pixazo video request body:', JSON.stringify(body, null, 2));
   const payload = await postJsonWithFallback([DEFAULT_VIDEO_ENDPOINT, OFFICIAL_VIDEO_ENDPOINT], body, 'video');
@@ -258,4 +260,13 @@ async function imageToVideo({ imageUrl, prompt }) {
   return { ...file, payload, model: 'runway-gen-4-5', endpoint: DEFAULT_VIDEO_ENDPOINT, sourceUrl: mediaUrl };
 }
 
-module.exports = { imageToImage, imageToVideo };
+module.exports = {
+  imageToImage,
+  imageToVideo,
+  postJsonWithFallback,
+  pollForCompletion,
+  downloadToBuffer,
+  extractMediaUrl,
+  DEFAULT_IMAGE_ENDPOINT,
+  OFFICIAL_IMAGE_ENDPOINT,
+};
