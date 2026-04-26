@@ -94,11 +94,6 @@ export default function AuthModal({ mode: initialMode, onClose }) {
           </span>
         </p>
 
-        {mode === 'login' && (
-          <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-            <strong>Admin:</strong> admin@aura.ai / admin123
-          </div>
-        )}
       </div>
     </div>
   );
