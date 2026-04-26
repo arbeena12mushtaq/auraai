@@ -56,20 +56,20 @@ function getRandomRealisticScene() {
   ];
 
   const cameras = [
-    'selfie angle, phone held at arm length slightly above eye level, looking up at camera through lashes, front-facing phone camera',
-    'close-up selfie, phone very close to face, pouty lips, direct flirty eye contact, front camera phone',
-    'mirror selfie, phone visible in reflection, full body pose, one hip out, confident stance',
-    'selfie from slightly below chin level, looking down at camera, seductive angle, soft expression',
+    'selfie angle, phone held at arm length slightly above eye level, looking up at camera, front-facing phone camera',
+    'close-up selfie, phone very close to face, soft smile, direct eye contact, front camera phone',
+    'mirror selfie, phone visible in reflection, full body pose, confident stance',
+    'selfie from slightly below chin level, looking down at camera, warm angle, soft expression',
     'video call framing, face and chest visible, leaning slightly forward toward camera, inviting expression',
     'selfie with head tilted, hair falling to one side, playful smile, phone at eye level',
   ];
 
   const moods = [
-    'flirty and playful, biting lower lip slightly, eyes teasing',
-    'sultry and confident, half-smile, intense eye contact',
+    'flirty and playful, soft smile, eyes teasing',
+    'confident and attractive, half-smile, intense eye contact',
     'sweet and inviting, warm genuine smile, soft gaze',
-    'bold and seductive, smoldering look, slight smirk',
-    'cute and coy, looking through lashes, shy smile',
+    'bold and glamorous, smoldering look, slight smirk',
+    'cute and charming, looking through lashes, shy smile',
   ];
 
   const scene = scenes[Math.floor(Math.random() * scenes.length)];
@@ -103,7 +103,7 @@ async function generateWithPollinations(prompt, width = 1024, height = 1024) {
     const seed = Math.floor(Math.random() * 999999);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&enhance=true&model=flux`;
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
     try {
       console.log(`🌸 Pollinations avatar attempt ${attempt}/${attempts} (seed:${seed})...`);
 
@@ -193,7 +193,7 @@ function scenePromptForCompanion(companion, scene, userPrompt = '') {
 
 function flirtyVideoPromptForCompanion(companion, scene, actionPrompt = '') {
   const spokenLine = sanitizePrompt(actionPrompt || getRandomFlirtyDialogue());
-  return `Selfie video, same person as source image. ${scene.outfit}. Background: ${scene.setting}. Looking at front camera, ${scene.mood}. Speaking to camera: "${spokenLine}". Natural head tilts, smiling, hair play, lip bite, eye contact. Phone selfie handheld feel. Photorealistic.`;
+  return `Selfie video, same person as source image. ${scene.outfit}. Background: ${scene.setting}. Looking at front camera, ${scene.mood}. Speaking to camera: "${spokenLine}". Natural head tilts, smiling, hair play, eye contact. Phone selfie handheld feel. Photorealistic.`;
 }
 
 
@@ -239,17 +239,56 @@ async function checkPublicImageUrl(url) {
 }
 
 async function createSceneFromAvatar(companion, userPrompt = '', req = null) {
-  const avatarUrl = toAbsolutePublicUrl(companion.avatar_url, req);
-  if (!avatarUrl) {
-    throw new Error('Companion avatar is missing or PUBLIC_BASE_URL / APP_BASE_URL is not configured.');
+  let avatarUrl = toAbsolutePublicUrl(companion.avatar_url, req);
+  
+  // Check if avatar URL is reachable
+  if (avatarUrl) {
+    const probe = await checkPublicImageUrl(avatarUrl);
+    console.log('🧪 Avatar URL probe:', probe);
+    if (!probe.ok) {
+      console.log('⚠️ Avatar URL not reachable, checking for source URL in DB...');
+      avatarUrl = null; // Will try alternatives below
+    }
   }
 
-  const probe = await checkPublicImageUrl(avatarUrl);
-  console.log('🧪 Avatar URL probe:', probe);
-  if (!probe.ok) {
-    const e = new Error(`Avatar URL is not publicly reachable (${probe.status || 'network error'})`);
-    e.body = probe;
-    throw e;
+  // If local avatar is broken, try the avatar_source_url (Pollinations CDN or Pixazo CDN)
+  if (!avatarUrl && companion.avatar_source_url) {
+    const sourceProbe = await checkPublicImageUrl(companion.avatar_source_url);
+    if (sourceProbe.ok) {
+      avatarUrl = companion.avatar_source_url;
+      console.log('✅ Using avatar source URL instead:', avatarUrl);
+    }
+  }
+
+  // If avatar URL contains pollinations.ai, use it directly (it's a persistent CDN URL)
+  if (!avatarUrl && companion.avatar_url?.includes('pollinations.ai')) {
+    avatarUrl = companion.avatar_url;
+    console.log('✅ Using Pollinations URL directly:', avatarUrl);
+  }
+
+  // If avatar URL contains r2.dev (Pixazo CDN), use it directly
+  if (!avatarUrl && companion.avatar_url?.includes('r2.dev')) {
+    avatarUrl = companion.avatar_url;
+    console.log('✅ Using Pixazo CDN URL directly:', avatarUrl);
+  }
+
+  // Last resort: try to regenerate avatar on-the-fly via Pollinations
+  if (!avatarUrl) {
+    console.log('⚠️ No working avatar URL found, regenerating via Pollinations...');
+    const gender = companion.category === 'Guys' ? 'man' : 'woman';
+    const desc = sanitizePrompt(companion.description || companion.name || 'attractive person');
+    const prompt = `photorealistic close-up portrait of a beautiful ${gender}, ${desc}, professional portrait photography, front facing, looking at camera`;
+    const regen = await generateWithPollinations(prompt);
+    if (regen) {
+      avatarUrl = regen.sourceUrl;
+      // Update the companion's avatar URL in DB so this doesn't happen again
+      await pool.query('UPDATE companions SET avatar_url = $1 WHERE id = $2', [avatarUrl, companion.id]).catch(() => {});
+      console.log('✅ Regenerated avatar:', avatarUrl);
+    }
+  }
+
+  if (!avatarUrl) {
+    throw new Error('Companion avatar is missing and could not be regenerated. Please upload a new avatar.');
   }
 
   const scene = getRandomRealisticScene();
@@ -275,7 +314,17 @@ router.post('/generate', authMiddleware, async (req, res) => {
       ? `anime character portrait of a ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
       : `photorealistic close-up portrait of a beautiful ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
-    // Use Pixazo Nano Banana 2 for avatar generation (text-to-image, no reference image)
+    // PRIMARY: Pollinations (fast, free)
+    const imageBuffer = await generateWithPollinations(prompt);
+    if (imageBuffer) {
+      const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
+      const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+      console.log('✅ Generated avatar via Pollinations:', absolutePreviewUrl);
+      return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
+    }
+
+    // FALLBACK: Nano Banana 2 via Pixazo (slower but reliable)
+    console.log('⚠️ Pollinations failed, falling back to Nano Banana 2...');
     const body = {
       prompt,
       aspect_ratio: '1:1',
@@ -283,17 +332,12 @@ router.post('/generate', authMiddleware, async (req, res) => {
       output_format: 'png',
     };
 
-    console.log('📤 Avatar gen request:', JSON.stringify(body, null, 2));
-
     const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
             DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint, extractMediaUrl: extractUrl } = require('../services/pixazo');
 
     const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
-    console.log('📥 Avatar gen response:', JSON.stringify(payload, null, 2));
-
     const requestId = payload?.request_id;
     if (!requestId) {
-      // Check for immediate result
       const immediateUrl = extractUrl(payload);
       if (immediateUrl) {
         const file = await dlBuffer(immediateUrl);
@@ -301,15 +345,14 @@ router.post('/generate', authMiddleware, async (req, res) => {
         const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
         return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: immediateUrl, provider: 'pixazo-nano-banana-2' });
       }
-      return res.status(503).json({ error: 'Avatar generation failed — no request ID returned' });
+      return res.status(503).json({ error: 'Avatar generation failed' });
     }
 
     const mediaUrl = await pollAvatar(requestId, payload?.polling_url, 'avatar');
     const file = await dlBuffer(mediaUrl);
     const previewUrl = saveBuffer('gen', file.buffer, '.png');
     const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-    console.log('✅ Generated avatar via Nano Banana 2:', absolutePreviewUrl);
-    console.log('✅ Avatar CDN URL:', mediaUrl);
+    console.log('✅ Generated avatar via Nano Banana 2 (fallback):', absolutePreviewUrl);
     return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
   } catch (err) {
     console.error('Avatar error:', err?.message, err?.body);
