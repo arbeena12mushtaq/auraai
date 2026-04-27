@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
 const { initDatabase } = require('./config/database');
 
 const app = express();
@@ -32,10 +33,11 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Serve uploaded files
+// Serve uploaded files — silently 404 missing files (Railway wipes /uploads on redeploy)
 const uploadsPath = path.join(__dirname, 'uploads');
-app.use('/uploads', express.static(uploadsPath, { fallthrough: false }));
-app.use('/uploads', (req, res) => res.status(404).json({ error: 'Upload not found' }));
+if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+app.use('/uploads', express.static(uploadsPath, { fallthrough: true }));
+app.use('/uploads', (req, res) => res.status(404).end());
 
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
