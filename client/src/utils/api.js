@@ -32,6 +32,7 @@ export async function api(path, options = {}) {
       body: options.body instanceof FormData ? options.body : (options.body ? JSON.stringify(options.body) : undefined),
     });
   } catch (error) {
+    if (error.name === 'AbortError') throw error;
     throw { error: error?.message || 'Network request failed' };
   }
 

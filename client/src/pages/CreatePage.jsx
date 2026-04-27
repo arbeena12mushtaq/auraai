@@ -57,6 +57,9 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     setGenerating(true);
     setError('');
     try {
+      // Add a 90-second timeout so the button never stays stuck
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
       const data = await api('/image/generate', {
         method: 'POST',
         body: {
@@ -64,7 +67,9 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           art_style: form.art_style,
           description: form.description,
         },
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       const previewUrl = data.avatar_preview_url || data.avatar_url;
       const sourceUrl = data.avatar_source_url || data.avatar_url;
       if (previewUrl || sourceUrl) {
@@ -74,7 +79,11 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
         set('avatarSeed', data.seed || 0);
       }
     } catch (err) {
-      setError(err.error || 'Image generation failed. You can upload an image manually instead.');
+      if (err.name === 'AbortError') {
+        setError('Generation timed out. Please try again.');
+      } else {
+        setError(err.error || 'Image generation failed. Try again or upload an image.');
+      }
     }
     setGenerating(false);
   };

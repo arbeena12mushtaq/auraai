@@ -312,17 +312,12 @@ router.post('/generate', authMiddleware, async (req, res) => {
     let desc = sanitizePrompt(req.body.description);
 
     // Detect ethnicity only when the word clearly describes the person (not clothing)
-    // Match: "black woman", "black succubus", "ebony girl", "black man" etc.
-    // Don't match: "black dress", "black hair", "black outfit", "black wings"
     const clothingWords = /dress|hair|outfit|wings|clothes|top|shirt|skirt|pants|boots|shoes|jacket|robe|armor|cape|hood|gown|suit|heels|stockings|gloves|hat|crown|corset|lingerie|lace|leather|necklace|earring/i;
     let ethnicityPrefix = '';
-    
-    // Only check "black" if it's NOT followed by a clothing/body word
     const blackMatch = desc.match(/\b(black)\s+(\w+)/i);
     if (blackMatch && !clothingWords.test(blackMatch[2])) {
       ethnicityPrefix = 'dark-skinned Black';
     }
-    // These words are unambiguous — always refer to ethnicity
     if (/\bebony\b/i.test(desc)) ethnicityPrefix = 'dark-skinned Black African';
     if (/\bafrican\b/i.test(desc)) ethnicityPrefix = 'Black African';
     if (/\blatina\b/i.test(desc)) ethnicityPrefix = 'Latina Hispanic';
@@ -334,6 +329,8 @@ router.post('/generate', authMiddleware, async (req, res) => {
       ? `anime character portrait of a ${ethnicityPrefix} ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
       : `photorealistic close-up portrait of a beautiful ${ethnicityPrefix} ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
+    console.log('🎨 Avatar prompt:', prompt);
+
     // PRIMARY: Pollinations (fast, free)
     const imageBuffer = await generateWithPollinations(prompt);
     if (imageBuffer) {
@@ -343,40 +340,36 @@ router.post('/generate', authMiddleware, async (req, res) => {
       return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
     }
 
-    // FALLBACK: Nano Banana 2 via Pixazo (slower but reliable)
-    console.log('⚠️ Pollinations failed, falling back to Nano Banana 2...');
-    const body = {
-      prompt,
-      aspect_ratio: '1:1',
-      resolution: '2K',
-      output_format: 'png',
-    };
+    // FALLBACK: Nano Banana 2 via Pixazo
+    console.log('⚠️ Pollinations failed, trying Nano Banana 2...');
+    try {
+      const body = { prompt, aspect_ratio: '1:1', resolution: '2K', output_format: 'png' };
+      const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
+              DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint, extractMediaUrl: extractUrl } = require('../services/pixazo');
 
-    const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
-            DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint, extractMediaUrl: extractUrl } = require('../services/pixazo');
-
-    const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
-    const requestId = payload?.request_id;
-    if (!requestId) {
-      const immediateUrl = extractUrl(payload);
-      if (immediateUrl) {
-        const file = await dlBuffer(immediateUrl);
+      const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
+      const requestId = payload?.request_id;
+      if (requestId) {
+        const mediaUrl = await pollAvatar(requestId, payload?.polling_url, 'avatar');
+        const file = await dlBuffer(mediaUrl);
         const previewUrl = saveBuffer('gen', file.buffer, '.png');
         const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-        return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: immediateUrl, provider: 'pixazo-nano-banana-2' });
+        console.log('✅ Generated avatar via Nano Banana 2 (fallback):', absolutePreviewUrl);
+        return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
       }
-      return res.status(503).json({ error: 'Avatar generation failed' });
+    } catch (pixazoErr) {
+      console.error('⚠️ Nano Banana fallback also failed:', pixazoErr?.message);
     }
 
-    const mediaUrl = await pollAvatar(requestId, payload?.polling_url, 'avatar');
-    const file = await dlBuffer(mediaUrl);
-    const previewUrl = saveBuffer('gen', file.buffer, '.png');
-    const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-    console.log('✅ Generated avatar via Nano Banana 2 (fallback):', absolutePreviewUrl);
-    return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
+    // BOTH FAILED — return the Pollinations URL directly as a last resort
+    // (it will generate on first browser load, just slower)
+    console.log('⚠️ All providers failed, returning Pollinations URL as direct fallback');
+    const seed = Math.floor(Math.random() * 999999);
+    const directUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
+    return res.json({ avatar_url: directUrl, avatar_preview_url: directUrl, avatar_source_url: directUrl, provider: 'pollinations-direct', seed });
   } catch (err) {
     console.error('Avatar error:', err?.message, err?.body);
-    return res.status(500).json({ error: err?.message || 'Failed to generate avatar' });
+    return res.status(500).json({ error: err?.message || 'Failed to generate avatar. Please try again.' });
   }
 });
 
