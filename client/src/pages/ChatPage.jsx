@@ -98,6 +98,7 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
 
           if (data.message?.content) {
             // Step 3: Convert reply to audio (TTS)
+            let audioSaved = false;
             try {
               const ttsRes = await fetch('/api/voice/tts', {
                 method: 'POST',
@@ -110,27 +111,27 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
               if (ttsRes.ok) {
                 const ttsData = await ttsRes.json();
                 if (ttsData.audio_url) {
-                  // Save audio message to DB for persistence
+                  // Update the text message in DB to become an audio message
                   try {
                     await api(`/voice/save`, {
                       method: 'POST',
-                      body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content },
+                      body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content, messageId: data.message.id },
                     });
+                    audioSaved = true;
                   } catch (e) { console.warn('Failed to save voice msg to DB:', e); }
-
-                  setMessages(prev => [...prev, {
-                    role: 'assistant', content: '🔊',
-                    type: 'audio', media_url: ttsData.audio_url,
-                    created_at: new Date().toISOString()
-                  }]);
-                } else {
-                  setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
                 }
-              } else {
+              }
+            } catch { /* TTS failed, text message stays as-is */ }
+
+            // Reload messages from DB to get the correct state (avoids duplicate text+audio)
+            try {
+              const chatData = await api(`/chat/${companion.id}`);
+              setMessages(chatData.messages || []);
+            } catch {
+              // Fallback: add locally
+              if (!audioSaved) {
                 setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
               }
-            } catch {
-              setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
             }
           }
           refreshUser();

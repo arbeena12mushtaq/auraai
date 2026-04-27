@@ -198,14 +198,17 @@ async function imageToImage({ imageUrl, prompt }) {
   if (!imageUrl) throw new Error('imageUrl is required for Pixazo image-to-image');
 
   // Nano Banana 2 API format (always async — no sync_mode)
+  const aspectRatio = '9:16'; // Always portrait/selfie — ignore env var
   const body = {
     prompt,
-    image_input: [imageUrl],                                       // was: image_urls
-    aspect_ratio: process.env.PIXAZO_IMAGE_ASPECT_RATIO || '9:16',
+    image_input: [imageUrl],
+    aspect_ratio: aspectRatio,
     resolution: process.env.PIXAZO_IMAGE_RESOLUTION || '2K',
     output_format: process.env.PIXAZO_IMAGE_OUTPUT_FORMAT || 'png',
-    // Removed: sync_mode, num_images, limit_generations (not in new API)
   };
+  if (process.env.PIXAZO_IMAGE_ASPECT_RATIO && process.env.PIXAZO_IMAGE_ASPECT_RATIO !== '9:16') {
+    console.log(`⚠️ Ignoring PIXAZO_IMAGE_ASPECT_RATIO env var (${process.env.PIXAZO_IMAGE_ASPECT_RATIO}), using 9:16`);
+  }
 
   console.log('📤 Pixazo image request body:', JSON.stringify(body, null, 2));
   const payload = await postJsonWithFallback([DEFAULT_IMAGE_ENDPOINT, OFFICIAL_IMAGE_ENDPOINT], body, 'image');

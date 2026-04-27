@@ -34,6 +34,7 @@ function refundTokens(userId, amount) {
 function sanitizePrompt(text) {
   return (text || '')
     .replace(/\b(nude|naked|nsfw|explicit|topless|bottomless|genitals|penis|vagina|porn|xxx)\b/gi, '')
+    .replace(/\bsexy\b/gi, 'attractive')
     .replace(/\bsuccubus\b/gi, 'winged gothic character')
     .replace(/\s+/g, ' ')
     .trim();
@@ -45,7 +46,7 @@ function getRandomRealisticScene() {
     { bg: 'modern bathroom, warm vanity mirror lighting, getting ready', outfit: 'off-shoulder fitted top, hair down, fresh and stunning' },
     { bg: 'cozy living room sofa, warm lamp lighting, relaxed evening', outfit: 'oversized sweater falling off one shoulder, cozy but attractive' },
     { bg: 'rooftop at night, city skyline bokeh lights behind', outfit: 'sleek black mini dress, bold glamorous look' },
-    { bg: 'beach at golden hour, warm ocean sunset behind', outfit: 'stylish bikini top with sheer coverup, beach glamour' },
+    { bg: 'beach at golden hour, warm ocean sunset behind', outfit: 'stylish one-piece swimsuit with sheer coverup, beach glamour' },
     { bg: 'luxury car passenger seat, soft dashboard lighting', outfit: 'fitted leather jacket over low-cut top, confident style' },
     { bg: 'swimming pool edge, bright sunny day, turquoise water', outfit: 'glamorous one-piece swimsuit, resort chic' },
     { bg: 'restaurant booth, dim romantic candlelight', outfit: 'form-fitting cocktail dress, deep neckline, elegant jewelry' },
@@ -308,11 +309,30 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     const gender = req.body.category === 'Guys' ? 'man' : 'woman';
     const isAnime = req.body.art_style === 'Anime';
-    const desc = sanitizePrompt(req.body.description);
+    let desc = sanitizePrompt(req.body.description);
+
+    // Detect ethnicity only when the word clearly describes the person (not clothing)
+    // Match: "black woman", "black succubus", "ebony girl", "black man" etc.
+    // Don't match: "black dress", "black hair", "black outfit", "black wings"
+    const clothingWords = /dress|hair|outfit|wings|clothes|top|shirt|skirt|pants|boots|shoes|jacket|robe|armor|cape|hood|gown|suit|heels|stockings|gloves|hat|crown|corset|lingerie|lace|leather|necklace|earring/i;
+    let ethnicityPrefix = '';
+    
+    // Only check "black" if it's NOT followed by a clothing/body word
+    const blackMatch = desc.match(/\b(black)\s+(\w+)/i);
+    if (blackMatch && !clothingWords.test(blackMatch[2])) {
+      ethnicityPrefix = 'dark-skinned Black';
+    }
+    // These words are unambiguous — always refer to ethnicity
+    if (/\bebony\b/i.test(desc)) ethnicityPrefix = 'dark-skinned Black African';
+    if (/\bafrican\b/i.test(desc)) ethnicityPrefix = 'Black African';
+    if (/\blatina\b/i.test(desc)) ethnicityPrefix = 'Latina Hispanic';
+    if (/\basian\b/i.test(desc)) ethnicityPrefix = 'East Asian';
+    if (/\bindian\b/i.test(desc)) ethnicityPrefix = 'South Asian Indian';
+    if (/\barab\b/i.test(desc)) ethnicityPrefix = 'Middle Eastern Arab';
 
     const prompt = isAnime
-      ? `anime character portrait of a ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
-      : `photorealistic close-up portrait of a beautiful ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
+      ? `anime character portrait of a ${ethnicityPrefix} ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
+      : `photorealistic close-up portrait of a beautiful ${ethnicityPrefix} ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
     // PRIMARY: Pollinations (fast, free)
     const imageBuffer = await generateWithPollinations(prompt);

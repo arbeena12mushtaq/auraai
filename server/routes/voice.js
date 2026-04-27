@@ -89,17 +89,31 @@ router.post('/stt', authMiddleware, audioUpload.single('audio'), async (req, res
   finally { if (tp) try { fs.unlinkSync(tp); } catch {} }
 });
 
-// Save voice message to DB for persistence
+// Save voice message to DB — converts the existing text message to audio type
 router.post('/save', authMiddleware, async (req, res) => {
   try {
-    const { companionId, audioUrl, content } = req.body;
+    const { companionId, audioUrl, content, messageId } = req.body;
     if (!companionId || !audioUrl) return res.status(400).json({ error: 'Missing fields' });
     
-    // Save the audio message so it appears on refresh
-    await pool.query(
-      `INSERT INTO messages (user_id, companion_id, role, content, type, media_url) VALUES ($1,$2,'assistant',$3,'audio',$4)`,
-      [req.user.id, companionId, content || '🔊', audioUrl]
-    );
+    if (messageId) {
+      // Update existing text message to become audio
+      await pool.query(
+        `UPDATE messages SET type = 'audio', media_url = $1 WHERE id = $2 AND user_id = $3`,
+        [audioUrl, messageId, req.user.id]
+      );
+    } else {
+      // Find the most recent assistant text message for this companion and convert it
+      const recent = await pool.query(
+        `SELECT id FROM messages WHERE user_id = $1 AND companion_id = $2 AND role = 'assistant' AND type = 'text' ORDER BY created_at DESC LIMIT 1`,
+        [req.user.id, companionId]
+      );
+      if (recent.rows.length > 0) {
+        await pool.query(
+          `UPDATE messages SET type = 'audio', media_url = $1 WHERE id = $2`,
+          [audioUrl, recent.rows[0].id]
+        );
+      }
+    }
     res.json({ success: true });
   } catch (e) {
     console.error('Save voice msg error:', e.message);

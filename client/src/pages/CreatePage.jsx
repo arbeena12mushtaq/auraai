@@ -197,7 +197,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                 </div>
               </>
             )}
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageUpload} />
+            <input id="avatar-upload" ref={fileRef} type="file" accept="image/*" capture="environment" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }} onChange={handleImageUpload} />
           </div>
 
           {previewSrc && (
