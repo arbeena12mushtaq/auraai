@@ -200,18 +200,18 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                       </span>
                     ) : '✨ Generate Avatar'}
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} type="button">
+                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} disabled={generating} type="button">
                     📷 Upload Instead
                   </button>
                 </div>
               </>
             )}
-            <input id="avatar-upload" ref={fileRef} type="file" accept="image/*" capture="environment" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }} onChange={handleImageUpload} />
+            <input id="avatar-upload" ref={fileRef} type="file" accept="image/*" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }} onChange={handleImageUpload} />
           </div>
 
           {previewSrc && (
             <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => fileRef.current?.click()} type="button">
+              <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => fileRef.current?.click()} disabled={generating} type="button">
                 📷 Upload Different
               </button>
               <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleGenerateImage} disabled={generating || !form.description.trim()} type="button">

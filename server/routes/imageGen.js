@@ -331,21 +331,11 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     console.log('🎨 Avatar prompt:', prompt);
 
-    // PRIMARY: Pollinations (fast, free)
-    const imageBuffer = await generateWithPollinations(prompt);
-    if (imageBuffer) {
-      const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
-      const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-      console.log('✅ Generated avatar via Pollinations:', absolutePreviewUrl);
-      return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
-    }
-
-    // FALLBACK: Nano Banana 2 via Pixazo
-    console.log('⚠️ Pollinations failed, trying Nano Banana 2...');
+    // PRIMARY: Nano Banana 2 via Pixazo (reliable, no rate limits)
     try {
       const body = { prompt, aspect_ratio: '1:1', resolution: '2K', output_format: 'png' };
       const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
-              DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint, extractMediaUrl: extractUrl } = require('../services/pixazo');
+              DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint } = require('../services/pixazo');
 
       const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
       const requestId = payload?.request_id;
@@ -354,16 +344,25 @@ router.post('/generate', authMiddleware, async (req, res) => {
         const file = await dlBuffer(mediaUrl);
         const previewUrl = saveBuffer('gen', file.buffer, '.png');
         const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-        console.log('✅ Generated avatar via Nano Banana 2 (fallback):', absolutePreviewUrl);
+        console.log('✅ Generated avatar via Nano Banana 2:', absolutePreviewUrl);
         return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
       }
     } catch (pixazoErr) {
-      console.error('⚠️ Nano Banana fallback also failed:', pixazoErr?.message);
+      console.error('⚠️ Nano Banana failed:', pixazoErr?.message?.slice(0, 200));
     }
 
-    // BOTH FAILED — return the Pollinations URL directly as a last resort
-    // (it will generate on first browser load, just slower)
-    console.log('⚠️ All providers failed, returning Pollinations URL as direct fallback');
+    // FALLBACK: Pollinations (free but rate-limited)
+    console.log('⚠️ Nano Banana failed, trying Pollinations...');
+    const imageBuffer = await generateWithPollinations(prompt);
+    if (imageBuffer) {
+      const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
+      const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+      console.log('✅ Generated avatar via Pollinations (fallback):', absolutePreviewUrl);
+      return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
+    }
+
+    // LAST RESORT: return Pollinations URL directly
+    console.log('⚠️ All providers failed, returning Pollinations URL directly');
     const seed = Math.floor(Math.random() * 999999);
     const directUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
     return res.json({ avatar_url: directUrl, avatar_preview_url: directUrl, avatar_source_url: directUrl, provider: 'pollinations-direct', seed });

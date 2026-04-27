@@ -219,8 +219,27 @@ export function PricingPage({ onRequireAuth }) {
         </div>
       )}
 
-      <div className="text-center mt-2" style={{ fontSize: 12, color: 'var(--text3)' }}>
-        🔒 Secure payments via Stripe • Cancel anytime • Discreet billing
+      {user?.plan && (
+        <div className="text-center mt-2">
+          <button className="btn btn-secondary btn-sm" style={{ fontSize: 12 }}
+            onClick={async () => {
+              try {
+                const data = await api('/payments/cancel', { method: 'POST' });
+                if (data.url) window.location.href = data.url;
+              } catch (err) {
+                alert(err.error || 'Failed to open subscription management.');
+              }
+            }}>
+            Manage Subscription / Cancel
+          </button>
+        </div>
+      )}
+
+      <div className="text-center mt-3" style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 500, margin: '16px auto 0', lineHeight: 1.6 }}>
+        🔒 Secure payments via Stripe • Cancel anytime • Discreet billing<br />
+        By subscribing you confirm you are 18+ years of age and agree to our Terms of Service and Privacy Policy.
+        All content is AI-generated fictional characters. No real individuals are depicted.
+        Subscriptions auto-renew monthly until cancelled.
       </div>
     </div>
   );

@@ -190,6 +190,32 @@ router.post('/subscribe', authMiddleware, async (req, res) => {
   } catch { res.status(500).json({ error: 'Server error' }); }
 });
 
+// Cancel subscription — redirects to Stripe Customer Portal
+router.post('/cancel', authMiddleware, async (req, res) => {
+  try {
+    const stripeKey = process.env.STRIPE_SECRET_KEY;
+    if (!stripeKey) return res.status(400).json({ error: 'Payment system not configured' });
+
+    const stripe = require('stripe')(stripeKey);
+    const user = await pool.query('SELECT stripe_customer_id, plan FROM users WHERE id = $1', [req.user.id]);
+    const customerId = user.rows[0]?.stripe_customer_id;
+
+    if (!customerId) return res.status(400).json({ error: 'No active subscription found' });
+
+    const baseUrl = process.env.CLIENT_URL || `https://${req.headers.host}`;
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: `${baseUrl}?page=premium`,
+    });
+
+    console.log(`💳 Customer portal for ${req.user.id}`);
+    res.json({ url: portalSession.url });
+  } catch (err) {
+    console.error('Cancel error:', err.message);
+    res.status(500).json({ error: 'Failed to open subscription management. Please try again.' });
+  }
+});
+
 // Payment history
 router.get('/history', authMiddleware, async (req, res) => {
   try {
