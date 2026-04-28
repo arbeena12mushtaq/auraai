@@ -56,105 +56,91 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     setLoading(false);
   };
 
-  // ===== Voice Recording (WhatsApp style) =====
+  // ===== Voice Recording (Web Speech API — free, no API key) =====
   const toggleRecording = async () => {
     if (recording) {
-      mediaRecorderRef.current?.stop();
+      if (window._auraRecognition) window._auraRecognition.stop();
       setRecording(false);
       return;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      const chunks = [];
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Voice chat is not supported on this browser. Please use Chrome or Edge.');
+      return;
+    }
 
-      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        const userAudioUrl = URL.createObjectURL(blob);
+    const rec = new SpeechRecognition();
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.lang = 'en-US';
+    window._auraRecognition = rec;
+    mediaRecorderRef.current = { stop: () => rec.stop() };
 
-        // Show user's audio message immediately (local preview)
-        setMessages(prev => [...prev, { role: 'user', content: '🎤 Voice message', type: 'audio', media_url: userAudioUrl, created_at: new Date().toISOString() }]);
-        setLoading(true);
+    rec.onresult = async (event) => {
+      const transcript = event.results[0]?.[0]?.transcript || '';
+      setRecording(false);
+      if (!transcript.trim()) return;
 
-        try {
-          // Step 1: Transcribe audio (STT)
-          const formData = new FormData();
-          formData.append('audio', blob, 'voice.webm');
-          const token = getToken();
-          const sttRes = await fetch('/api/voice/stt', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData,
-          });
-          const sttData = await sttRes.json();
-          const transcribedText = sttData.text || 'Hello';
+      setMessages(prev => [...prev, { role: 'user', content: transcript, type: 'text', created_at: new Date().toISOString() }]);
+      setLoading(true);
 
-          // Step 2: Send transcribed text to chat AI (this saves both user + AI text messages in DB)
-          const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: transcribedText } });
+      try {
+        const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: transcript } });
 
-          if (data.message?.content) {
-            // Step 3: Convert reply to audio (TTS)
-            let audioSaved = false;
-            try {
-              const ttsRes = await fetch('/api/voice/tts', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ text: data.message.content, voice: companion.voice }),
-              });
-              if (ttsRes.ok) {
-                const ttsData = await ttsRes.json();
-                if (ttsData.audio_url) {
-                  try {
-                    await api(`/voice/save`, {
-                      method: 'POST',
-                      body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content, messageId: data.message.id },
-                    });
-                    audioSaved = true;
-                  } catch (e) { console.warn('Failed to save voice msg to DB:', e); }
-                } else if (ttsData.error) {
-                  console.error('TTS error:', ttsData.error);
-                }
-              } else {
-                const errData = await ttsRes.json().catch(() => ({}));
-                console.error('TTS failed:', ttsRes.status, errData.error);
-                if (errData.error?.includes('OPENAI_API_KEY') || ttsRes.status === 429) {
-                  alert('Voice chat is temporarily unavailable. Please try text chat instead.');
+        if (data.message?.content) {
+          let audioSaved = false;
+          try {
+            const token = getToken();
+            const ttsRes = await fetch('/api/voice/tts', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: data.message.content, voice: companion.voice }),
+            });
+            if (ttsRes.ok) {
+              const ttsData = await ttsRes.json();
+              if (ttsData.audio_url) {
+                try {
+                  await api('/voice/save', {
+                    method: 'POST',
+                    body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content, messageId: data.message.id },
+                  });
+                  audioSaved = true;
+                } catch (e) { console.warn('Voice save failed:', e); }
+              } else if (ttsData.useBrowserTTS) {
+                // Fallback: use browser's built-in speech synthesis
+                if ('speechSynthesis' in window) {
+                  const utter = new SpeechSynthesisUtterance(data.message.content);
+                  utter.rate = 0.95;
+                  utter.pitch = 1.1;
+                  window.speechSynthesis.speak(utter);
                 }
               }
-            } catch (ttsErr) {
-              console.error('TTS network error:', ttsErr.message);
             }
+          } catch (e) { console.error('TTS error:', e); }
 
-            // Reload messages from DB
-            try {
-              const chatData = await api(`/chat/${companion.id}`);
-              setMessages(chatData.messages || []);
-            } catch {
-              if (!audioSaved) {
-                setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
-              }
+          try {
+            const chatData = await api(`/chat/${companion.id}`);
+            setMessages(chatData.messages || []);
+          } catch {
+            if (!audioSaved) {
+              setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
             }
           }
-          refreshUser();
-        } catch (err) {
-          console.error('Voice error:', err);
         }
-        setLoading(false);
-      };
+        refreshUser();
+      } catch (err) { console.error('Voice chat error:', err); }
+      setLoading(false);
+    };
 
-      mediaRecorder.start();
-      setRecording(true);
-    } catch (err) {
-      console.error('Mic error:', err);
-      alert('Microphone access denied.');
-    }
+    rec.onerror = (e) => {
+      setRecording(false);
+      if (e.error === 'not-allowed') alert('Microphone access denied. Please allow microphone permission.');
+    };
+    rec.onend = () => setRecording(false);
+
+    try { rec.start(); setRecording(true); }
+    catch (e) { console.error('Speech start failed:', e); setRecording(false); }
   };
 
   const recoverLatestMediaMessage = async (expectedType, attempts = 8, delayMs = 1500) => {
