@@ -108,8 +108,8 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
     const companion = compResult.rows[0];
 
     // Save user message
-    await pool.query(
-      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5)',
+    const userMsg = await pool.query(
+      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5) RETURNING id',
       [req.user.id, companionId, 'user', content.trim(), 'text']
     );
 
@@ -139,13 +139,16 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
     if (!contentFilter(aiResponse)) aiResponse = "haha let's talk about something else 😏";
 
     // Save AI response
-    await pool.query(
-      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5)',
+    const aiMsg = await pool.query(
+      'INSERT INTO messages (user_id, companion_id, role, content, type) VALUES ($1,$2,$3,$4,$5) RETURNING id',
       [req.user.id, companionId, 'assistant', aiResponse, 'text']
     );
     await pool.query('UPDATE users SET messages_used = messages_used + 1 WHERE id = $1', [req.user.id]);
 
-    res.json({ message: { role: 'assistant', content: aiResponse, type: 'text', created_at: new Date().toISOString() } });
+    res.json({
+      message: { id: aiMsg.rows[0].id, role: 'assistant', content: aiResponse, type: 'text', created_at: new Date().toISOString() },
+      userMessage: { id: userMsg.rows[0].id },
+    });
   } catch (err) {
     console.error('Chat error:', err);
     res.status(500).json({ error: 'Server error' });

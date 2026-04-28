@@ -119,6 +119,11 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           // Send the transcribed text to AI (hidden from UI — user only sees audio bubble)
           const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: finalTranscript } });
 
+          // Mark the user's message as voice note in DB (so reload shows audio bubble, not text)
+          if (data.userMessage?.id) {
+            try { await api('/voice/save', { method: 'POST', body: { companionId: companion.id, audioUrl: userAudioUrl, messageId: data.userMessage.id, isUser: true } }); } catch {}
+          }
+
           if (data.message?.content) {
             // Convert AI reply to audio
             let audioSaved = false;
