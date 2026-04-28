@@ -111,7 +111,6 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
               if (ttsRes.ok) {
                 const ttsData = await ttsRes.json();
                 if (ttsData.audio_url) {
-                  // Update the text message in DB to become an audio message
                   try {
                     await api(`/voice/save`, {
                       method: 'POST',
@@ -119,16 +118,25 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                     });
                     audioSaved = true;
                   } catch (e) { console.warn('Failed to save voice msg to DB:', e); }
+                } else if (ttsData.error) {
+                  console.error('TTS error:', ttsData.error);
+                }
+              } else {
+                const errData = await ttsRes.json().catch(() => ({}));
+                console.error('TTS failed:', ttsRes.status, errData.error);
+                if (errData.error?.includes('OPENAI_API_KEY') || ttsRes.status === 429) {
+                  alert('Voice chat is temporarily unavailable. Please try text chat instead.');
                 }
               }
-            } catch { /* TTS failed, text message stays as-is */ }
+            } catch (ttsErr) {
+              console.error('TTS network error:', ttsErr.message);
+            }
 
-            // Reload messages from DB to get the correct state (avoids duplicate text+audio)
+            // Reload messages from DB
             try {
               const chatData = await api(`/chat/${companion.id}`);
               setMessages(chatData.messages || []);
             } catch {
-              // Fallback: add locally
               if (!audioSaved) {
                 setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
               }

@@ -59,7 +59,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     try {
       // Add a 90-second timeout so the button never stays stuck
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 90000);
+      const timeout = setTimeout(() => controller.abort(), 30000);
       const data = await api('/image/generate', {
         method: 'POST',
         body: {
@@ -196,24 +196,28 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                     {generating ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span className="gen-spinner" />
-                        Generating...
+                        Generating (5-15s)...
                       </span>
                     ) : '✨ Generate Avatar'}
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} disabled={generating} type="button">
+                  <label htmlFor="avatar-upload" className="btn btn-secondary btn-sm"
+                    style={{ cursor: generating ? 'not-allowed' : 'pointer', opacity: generating ? 0.5 : 1, pointerEvents: generating ? 'none' : 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     📷 Upload Instead
-                  </button>
+                  </label>
                 </div>
               </>
             )}
-            <input id="avatar-upload" ref={fileRef} type="file" accept="image/*" style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }} onChange={handleImageUpload} />
+            <input id="avatar-upload" ref={fileRef} type="file" accept="image/*"
+              style={{ position: 'fixed', top: -9999, left: -9999, opacity: 0, width: 0, height: 0 }}
+              onChange={handleImageUpload} />
           </div>
 
           {previewSrc && (
             <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => fileRef.current?.click()} disabled={generating} type="button">
+              <label htmlFor="avatar-upload" className="btn btn-secondary btn-sm"
+                style={{ flex: 1, cursor: generating ? 'not-allowed' : 'pointer', opacity: generating ? 0.5 : 1, pointerEvents: generating ? 'none' : 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                 📷 Upload Different
-              </button>
+              </label>
               <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleGenerateImage} disabled={generating || !form.description.trim()} type="button">
                 {generating ? '✨ Generating...' : '🔄 Regenerate'}
               </button>

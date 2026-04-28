@@ -331,38 +331,34 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     console.log('🎨 Avatar prompt:', prompt);
 
-    // PRIMARY: Nano Banana 2 via Pixazo (reliable, no rate limits)
+    // FAST: Single Pollinations attempt with 20s timeout
     try {
-      const body = { prompt, aspect_ratio: '1:1', resolution: '2K', output_format: 'png' };
-      const { postJsonWithFallback: postFallback, pollForCompletion: pollAvatar, downloadToBuffer: dlBuffer,
-              DEFAULT_IMAGE_ENDPOINT: imgEndpoint, OFFICIAL_IMAGE_ENDPOINT: officialEndpoint } = require('../services/pixazo');
-
-      const payload = await postFallback([imgEndpoint, officialEndpoint], body, 'avatar');
-      const requestId = payload?.request_id;
-      if (requestId) {
-        const mediaUrl = await pollAvatar(requestId, payload?.polling_url, 'avatar');
-        const file = await dlBuffer(mediaUrl);
-        const previewUrl = saveBuffer('gen', file.buffer, '.png');
-        const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-        console.log('✅ Generated avatar via Nano Banana 2:', absolutePreviewUrl);
-        return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: mediaUrl, provider: 'pixazo-nano-banana-2' });
+      const seed = Math.floor(Math.random() * 999999);
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      console.log(`🌸 Avatar attempt (seed:${seed})...`);
+      const pollRes = await fetch(pollinationsUrl, { signal: controller.signal, headers: { accept: 'image/*' } });
+      clearTimeout(timer);
+      if (pollRes.ok) {
+        const ct = pollRes.headers.get('content-type') || '';
+        if (ct.includes('image')) {
+          const buffer = Buffer.from(await pollRes.arrayBuffer());
+          if (buffer.length >= 3000) {
+            const previewUrl = saveBuffer('gen', buffer, '.png');
+            const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+            console.log('✅ Avatar generated via Pollinations:', absolutePreviewUrl);
+            return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: pollinationsUrl, provider: 'pollinations', seed });
+          }
+        }
       }
-    } catch (pixazoErr) {
-      console.error('⚠️ Nano Banana failed:', pixazoErr?.message?.slice(0, 200));
+    } catch (e) {
+      console.log('⚠️ Pollinations attempt failed:', e.message?.slice(0, 80));
     }
 
-    // FALLBACK: Pollinations (free but rate-limited)
-    console.log('⚠️ Nano Banana failed, trying Pollinations...');
-    const imageBuffer = await generateWithPollinations(prompt);
-    if (imageBuffer) {
-      const previewUrl = saveBuffer('gen', imageBuffer.buffer, '.png');
-      const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-      console.log('✅ Generated avatar via Pollinations (fallback):', absolutePreviewUrl);
-      return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: imageBuffer.sourceUrl, provider: 'pollinations', seed: imageBuffer.seed });
-    }
-
-    // LAST RESORT: return Pollinations URL directly
-    console.log('⚠️ All providers failed, returning Pollinations URL directly');
+    // INSTANT FALLBACK: Return Pollinations URL directly — browser will render it on load
+    // This is instant, no waiting, and the image generates when the browser fetches the URL
+    console.log('⚠️ Returning Pollinations URL as direct fallback (instant)');
     const seed = Math.floor(Math.random() * 999999);
     const directUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
     return res.json({ avatar_url: directUrl, avatar_preview_url: directUrl, avatar_source_url: directUrl, provider: 'pollinations-direct', seed });
