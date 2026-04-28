@@ -1,8 +1,14 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
+
+// msedge-tts needs global crypto
+if (!globalThis.crypto) globalThis.crypto = crypto;
+if (!globalThis.crypto.randomUUID) globalThis.crypto.randomUUID = () => crypto.randomUUID();
+
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
 const router = express.Router();
