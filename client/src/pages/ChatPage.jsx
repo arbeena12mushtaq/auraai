@@ -724,14 +724,28 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         /* === AUDIO === */
         .aura-chat-audio-wrapper {
           width: 100%;
-          min-width: 180px;
-          max-width: 280px;
+          min-width: 160px;
+          max-width: 260px;
+          background: rgba(255,255,255,0.05);
+          border-radius: 20px;
+          padding: 4px;
+          overflow: hidden;
         }
         .aura-chat-audio-wrapper audio {
           width: 100%;
-          height: 40px;
-          border-radius: 20px;
+          height: 36px;
+          border-radius: 18px;
           outline: none;
+          filter: invert(0);
+        }
+        /* Force compact audio on webkit/chrome */
+        .aura-chat-audio-wrapper audio::-webkit-media-controls-panel {
+          background: rgba(255,255,255,0.08);
+          border-radius: 18px;
+        }
+        .aura-chat-audio-wrapper audio::-webkit-media-controls-enclosure {
+          border-radius: 18px;
+          max-height: 36px;
         }
 
         /* === MEDIA LOADING STATE === */
