@@ -39,33 +39,24 @@ router.post('/tts', authMiddleware, async (req, res) => {
     const tts = new MsEdgeTTS();
     await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
-    const readable = tts.toStream(text.substring(0, 4096));
-    const chunks = [];
+    const fn = `tts-${Date.now()}.mp3`;
+    const filePath = path.join(uploadDir, fn);
 
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('TTS timeout')), 30000);
-      readable.on('data', (chunk) => {
-        if (chunk.audio) chunks.push(chunk.audio);
-        else if (Buffer.isBuffer(chunk)) chunks.push(chunk);
-      });
-      readable.on('end', () => { clearTimeout(timeout); resolve(); });
-      readable.on('error', (e) => { clearTimeout(timeout); reject(e); });
-    });
-
-    if (chunks.length === 0) {
-      console.error('❌ Edge TTS: no audio chunks received');
+    // toFile writes the audio directly to disk — simpler and more reliable than toStream
+    const result = await tts.toFile(filePath, text.substring(0, 4096));
+    
+    const stat = fs.statSync(filePath);
+    if (stat.size < 100) {
+      fs.unlinkSync(filePath);
+      console.error('❌ Edge TTS: file too small, likely empty');
       return res.json({ audio_url: null, useBrowserTTS: true, text: text.substring(0, 4096) });
     }
 
-    const buf = Buffer.concat(chunks);
-    const fn = `tts-${Date.now()}.mp3`;
-    fs.writeFileSync(path.join(uploadDir, fn), buf);
     const audioUrl = `${getBaseUrl(req)}/uploads/${fn}`;
-    console.log('✅ TTS audio generated (Edge):', audioUrl, `(${Math.round(buf.length / 1024)}KB)`);
+    console.log('✅ TTS audio generated (Edge):', audioUrl, `(${Math.round(stat.size / 1024)}KB)`);
     res.json({ audio_url: audioUrl });
   } catch (e) {
     console.error('❌ Edge TTS error:', e.message, '— falling back to browser TTS');
-    // Tell frontend to use browser SpeechSynthesis as fallback
     res.json({ audio_url: null, useBrowserTTS: true, text: (req.body.text || '').substring(0, 4096) });
   }
 });
