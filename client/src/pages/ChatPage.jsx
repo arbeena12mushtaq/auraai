@@ -56,91 +56,131 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     setLoading(false);
   };
 
-  // ===== Voice Recording (Web Speech API — free, no API key) =====
+  // ===== Voice Recording (WhatsApp-style voice notes) =====
   const toggleRecording = async () => {
     if (recording) {
+      // Stop recording
+      if (mediaRecorderRef.current?.stop) mediaRecorderRef.current.stop();
       if (window._auraRecognition) window._auraRecognition.stop();
       setRecording(false);
       return;
     }
 
+    // Check browser support
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('Voice chat is not supported on this browser. Please use Chrome or Edge.');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert('Voice recording is not supported on this browser.');
       return;
     }
 
-    const rec = new SpeechRecognition();
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.lang = 'en-US';
-    window._auraRecognition = rec;
-    mediaRecorderRef.current = { stop: () => rec.stop() };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' });
+      const audioChunks = [];
+      mediaRecorderRef.current = mediaRecorder;
 
-    rec.onresult = async (event) => {
-      const transcript = event.results[0]?.[0]?.transcript || '';
-      setRecording(false);
-      if (!transcript.trim()) return;
+      // Also start speech recognition for transcription (runs in parallel)
+      let transcript = '';
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.lang = 'en-US';
+        window._auraRecognition = rec;
+        rec.onresult = (event) => { transcript = event.results[0]?.[0]?.transcript || ''; };
+        rec.onerror = () => {};
+        rec.onend = () => {};
+        try { rec.start(); } catch {}
+      }
 
-      setMessages(prev => [...prev, { role: 'user', content: transcript, type: 'text', created_at: new Date().toISOString() }]);
-      setLoading(true);
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
 
-      try {
-        const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: transcript } });
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        setRecording(false);
 
-        if (data.message?.content) {
-          let audioSaved = false;
-          try {
-            const token = getToken();
-            const ttsRes = await fetch('/api/voice/tts', {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: data.message.content, voice: companion.voice }),
-            });
-            if (ttsRes.ok) {
-              const ttsData = await ttsRes.json();
-              if (ttsData.audio_url) {
-                try {
-                  await api('/voice/save', {
-                    method: 'POST',
-                    body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content, messageId: data.message.id },
-                  });
-                  audioSaved = true;
-                } catch (e) { console.warn('Voice save failed:', e); }
-              } else if (ttsData.useBrowserTTS) {
-                // Fallback: use browser's built-in speech synthesis
-                if ('speechSynthesis' in window) {
-                  const utter = new SpeechSynthesisUtterance(data.message.content);
-                  utter.rate = 0.95;
-                  utter.pitch = 1.1;
-                  window.speechSynthesis.speak(utter);
+        // Create user voice note blob
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const userAudioUrl = URL.createObjectURL(audioBlob);
+
+        // Wait a moment for speech recognition to finish
+        await new Promise(r => setTimeout(r, 500));
+        const finalTranscript = transcript || 'voice message';
+
+        // Show user's voice note as audio bubble (like WhatsApp)
+        setMessages(prev => [...prev, {
+          role: 'user', content: '🎤', type: 'vn',
+          media_url: userAudioUrl,
+          created_at: new Date().toISOString(),
+        }]);
+        setLoading(true);
+
+        try {
+          // Send the transcribed text to AI (hidden from UI — user only sees audio bubble)
+          const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: finalTranscript } });
+
+          if (data.message?.content) {
+            // Convert AI reply to audio
+            let audioSaved = false;
+            try {
+              const token = getToken();
+              const ttsRes = await fetch('/api/voice/tts', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: data.message.content, voice: companion.voice }),
+              });
+              if (ttsRes.ok) {
+                const ttsData = await ttsRes.json();
+                if (ttsData.audio_url) {
+                  // Save AI audio to DB (converts text message to audio type)
+                  try {
+                    await api('/voice/save', {
+                      method: 'POST',
+                      body: { companionId: companion.id, audioUrl: ttsData.audio_url, content: data.message.content, messageId: data.message.id },
+                    });
+                    audioSaved = true;
+                  } catch (e) { console.warn('Voice save failed:', e); }
+                } else if (ttsData.useBrowserTTS) {
+                  // Fallback: speak through browser speakers
+                  if ('speechSynthesis' in window) {
+                    const utter = new SpeechSynthesisUtterance(data.message.content);
+                    utter.rate = 0.95;
+                    utter.pitch = 1.1;
+                    window.speechSynthesis.speak(utter);
+                  }
                 }
               }
-            }
-          } catch (e) { console.error('TTS error:', e); }
+            } catch (e) { console.error('TTS error:', e); }
 
-          try {
-            const chatData = await api(`/chat/${companion.id}`);
-            setMessages(chatData.messages || []);
-          } catch {
-            if (!audioSaved) {
-              setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
+            // Reload messages from DB to get clean state
+            try {
+              const chatData = await api(`/chat/${companion.id}`);
+              setMessages(chatData.messages || []);
+            } catch {
+              if (!audioSaved) {
+                setMessages(prev => [...prev, { role: 'assistant', content: data.message.content, type: 'text', created_at: new Date().toISOString() }]);
+              }
             }
           }
-        }
-        refreshUser();
-      } catch (err) { console.error('Voice chat error:', err); }
-      setLoading(false);
-    };
+          refreshUser();
+        } catch (err) { console.error('Voice chat error:', err); }
+        setLoading(false);
+      };
 
-    rec.onerror = (e) => {
+      mediaRecorder.start();
+      setRecording(true);
+
+      // Auto-stop after 30 seconds
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') mediaRecorder.stop();
+      }, 30000);
+
+    } catch (e) {
+      console.error('Mic access failed:', e);
+      if (e.name === 'NotAllowedError') alert('Microphone access denied. Please allow microphone permission.');
+      else alert('Could not access microphone. Please check your browser settings.');
       setRecording(false);
-      if (e.error === 'not-allowed') alert('Microphone access denied. Please allow microphone permission.');
-    };
-    rec.onend = () => setRecording(false);
-
-    try { rec.start(); setRecording(true); }
-    catch (e) { console.error('Speech start failed:', e); setRecording(false); }
+    }
   };
 
   const recoverLatestMediaMessage = async (expectedType, attempts = 8, delayMs = 1500) => {
