@@ -39,19 +39,26 @@ router.post('/tts', authMiddleware, async (req, res) => {
     const tts = new MsEdgeTTS();
     await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
-    const fn = `tts-${Date.now()}.mp3`;
-    const filePath = path.join(uploadDir, fn);
+    // toFile expects a DIRECTORY path, creates audio.mp3 inside it
+    const tmpDir = path.join(uploadDir, `tts-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
 
-    // toFile writes the audio directly to disk — simpler and more reliable than toStream
-    const result = await tts.toFile(filePath, text.substring(0, 4096));
-    
-    const stat = fs.statSync(filePath);
-    if (stat.size < 100) {
-      fs.unlinkSync(filePath);
-      console.error('❌ Edge TTS: file too small, likely empty');
-      return res.json({ audio_url: null, useBrowserTTS: true, text: text.substring(0, 4096) });
+    const result = await tts.toFile(tmpDir, text.substring(0, 4096));
+    const generatedFile = result.audioFilePath || path.join(tmpDir, 'audio.mp3');
+
+    if (!fs.existsSync(generatedFile)) {
+      throw new Error('Edge TTS did not generate audio file');
     }
 
+    // Move the audio.mp3 to uploads with a clean filename
+    const fn = `tts-${Date.now()}.mp3`;
+    const finalPath = path.join(uploadDir, fn);
+    fs.renameSync(generatedFile, finalPath);
+
+    // Clean up temp directory
+    try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
+
+    const stat = fs.statSync(finalPath);
     const audioUrl = `${getBaseUrl(req)}/uploads/${fn}`;
     console.log('✅ TTS audio generated (Edge):', audioUrl, `(${Math.round(stat.size / 1024)}KB)`);
     res.json({ audio_url: audioUrl });
