@@ -1,13 +1,22 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const nodeCrypto = require('crypto');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 
-// msedge-tts needs global crypto
-if (!globalThis.crypto) globalThis.crypto = crypto;
-if (!globalThis.crypto.randomUUID) globalThis.crypto.randomUUID = () => crypto.randomUUID();
+// msedge-tts needs Web Crypto API on globalThis
+if (!globalThis.crypto) {
+  globalThis.crypto = nodeCrypto.webcrypto || nodeCrypto;
+} else if (!globalThis.crypto.subtle) {
+  globalThis.crypto.subtle = (nodeCrypto.webcrypto || {}).subtle;
+}
+if (!globalThis.crypto.getRandomValues) {
+  globalThis.crypto.getRandomValues = (arr) => nodeCrypto.randomFillSync(arr);
+}
+if (!globalThis.crypto.randomUUID) {
+  globalThis.crypto.randomUUID = () => nodeCrypto.randomUUID();
+}
 
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
