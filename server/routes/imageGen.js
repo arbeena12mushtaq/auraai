@@ -331,29 +331,35 @@ router.post('/generate', authMiddleware, async (req, res) => {
 
     console.log('🎨 Avatar prompt:', prompt);
 
-    // FAST: Single Pollinations attempt with 20s timeout
-    try {
-      const seed = Math.floor(Math.random() * 999999);
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 20000);
-      console.log(`🌸 Avatar attempt (seed:${seed})...`);
-      const pollRes = await fetch(pollinationsUrl, { signal: controller.signal, headers: { accept: 'image/*' } });
-      clearTimeout(timer);
-      if (pollRes.ok) {
-        const ct = pollRes.headers.get('content-type') || '';
-        if (ct.includes('image')) {
-          const buffer = Buffer.from(await pollRes.arrayBuffer());
-          if (buffer.length >= 3000) {
-            const previewUrl = saveBuffer('gen', buffer, '.png');
-            const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-            console.log('✅ Avatar generated via Pollinations:', absolutePreviewUrl);
-            return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: pollinationsUrl, provider: 'pollinations', seed });
+    // Try Pollinations twice with different seeds (30s timeout each)
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const seed = Math.floor(Math.random() * 999999);
+        const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        console.log(`🌸 Avatar attempt ${attempt}/2 (seed:${seed})...`);
+        const pollRes = await fetch(pollinationsUrl, { signal: controller.signal, headers: { accept: 'image/*' } });
+        clearTimeout(timer);
+        if (pollRes.ok) {
+          const ct = pollRes.headers.get('content-type') || '';
+          if (ct.includes('image')) {
+            const buffer = Buffer.from(await pollRes.arrayBuffer());
+            if (buffer.length >= 3000) {
+              const previewUrl = saveBuffer('gen', buffer, '.png');
+              const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
+              console.log('✅ Avatar generated via Pollinations:', absolutePreviewUrl);
+              return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: pollinationsUrl, provider: 'pollinations', seed });
+            }
           }
+        } else {
+          console.log(`⚠️ Pollinations attempt ${attempt} failed: ${pollRes.status}`);
         }
+      } catch (e) {
+        console.log(`⚠️ Pollinations attempt ${attempt} error: ${e.message?.slice(0, 60)}`);
       }
-    } catch (e) {
-      console.log('⚠️ Pollinations attempt failed:', e.message?.slice(0, 80));
+      // Wait 2s before retry to avoid rate limit
+      if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
     }
 
     // INSTANT FALLBACK: Return Pollinations URL directly — browser will render it on load

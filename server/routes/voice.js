@@ -16,11 +16,11 @@ const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const TTS_VOICES = {
-  'Soft & Gentle': 'en-US-AnaNeural',
-  'Warm & Rich': 'en-US-AriaNeural',
-  'Bright & Cheerful': 'en-US-JennyNeural',
-  'Calm & Soothing': 'en-US-SaraNeural',
-  'Deep & Confident': 'en-US-GuyNeural',
+  'Soft & Gentle': 'en-US-SaraNeural',       // Soft, warm, mature female
+  'Warm & Rich': 'en-US-AriaNeural',          // Natural, warm female
+  'Bright & Cheerful': 'en-US-JennyNeural',   // Upbeat, cheerful female
+  'Calm & Soothing': 'en-US-EmmaNeural',      // Calm, soothing female
+  'Deep & Confident': 'en-US-GuyNeural',      // Deep male voice
 };
 
 function getBaseUrl(req) {
