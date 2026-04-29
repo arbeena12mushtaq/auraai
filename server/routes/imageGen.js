@@ -326,6 +326,21 @@ console.log('✅ Regenerated avatar via Pixazo:', avatarUrl);
   return { avatarUrl, scene, result };
 }
 
+async function generateWithPollinations(prompt) {
+  const seed = Math.floor(Math.random() * 999999);
+
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
+
+  console.log('🌸 Pollinations URL:', url);
+
+  return {
+    avatar_url: url,
+    avatar_preview_url: url,
+    avatar_source_url: url,
+    provider: 'pollinations',
+    seed
+  };
+}
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
     if (!req.body.description?.trim()) {
@@ -358,7 +373,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
     console.log('🎨 Avatar prompt:', prompt);
     console.log('🍌 Generating avatar via Pixazo Nano Banana 2...');
 
-    const avatar = await generateAvatarWithPixazo(prompt);
+    const avatar = await generateWithPollinations(prompt);
     return res.json(avatar);
 
   } catch (err) {
