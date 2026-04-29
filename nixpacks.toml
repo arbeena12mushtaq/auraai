@@ -2,10 +2,15 @@
 nixPkgs = ["nodejs_20", "npm-10_x"]
 
 [phases.install]
-cmds = ["cd client && npm install && cd ../server && npm install"]
+cmds = [
+  "cd client && npm install --include=dev",
+  "cd server && npm install"
+]
 
 [phases.build]
-cmds = ["cd client && npm run build"]
+cmds = [
+  "cd client && npx vite build"
+]
 
 [start]
 cmd = "cd server && node index.js"
