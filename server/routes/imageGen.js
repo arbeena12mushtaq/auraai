@@ -334,7 +334,7 @@ async function generateWithPollinations(prompt, req) {
   console.log('🌸 Pollinations generating:', url);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
+  const timer = setTimeout(() => controller.abort(), 30000);
 
   try {
     const r = await fetch(url, {
@@ -371,14 +371,18 @@ if (!r.ok) {
   console.error('Pollinations cache failed:', err.message);
 
   // 🚨 If rate limited → DO NOT return broken image
-  if (err.message.includes('429')) {
-    return {
-      success: false,
-      error: 'Image generation is busy. Please wait 30 seconds and try again.',
-      code: 'RATE_LIMITED'
-    };
-  }
-
+  if (
+  err.message.includes('429') ||
+  err.message.includes('POLLINATIONS_RATE_LIMIT') ||
+  err.name === 'AbortError' ||
+  err.message.includes('aborted')
+) {
+  return {
+    success: false,
+    error: 'Image generation is busy. Please wait 30 seconds and try again.',
+    code: 'RATE_LIMITED'
+  };
+}
   // fallback only if NOT rate limit
   return {
     avatar_url: url,
@@ -399,13 +403,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
     const isAnime = req.body.art_style === 'Anime';
     let desc = sanitizePrompt(req.body.description);
 
-    const clothingWords = /dress|hair|outfit|wings|clothes|top|shirt|skirt|pants|boots|shoes|jacket|robe|armor|cape|hood|gown|suit|heels|stockings|gloves|hat|crown|corset|lingerie|lace|leather|necklace|earring/i;
     let ethnicityPrefix = '';
-
-    const blackMatch = desc.match(/\b(black)\s+(\w+)/i);
-    if (blackMatch && !clothingWords.test(blackMatch[2])) {
-      ethnicityPrefix = 'dark-skinned Black';
-    }
 
     if (/\bebony\b/i.test(desc)) ethnicityPrefix = 'dark-skinned Black African';
     if (/\bafrican\b/i.test(desc)) ethnicityPrefix = 'Black African';
@@ -421,59 +419,25 @@ router.post('/generate', authMiddleware, async (req, res) => {
     console.log('🎨 Avatar prompt:', prompt);
     console.log('🌸 Generating avatar via Pollinations first...');
 
-    
+    // ✅ CALL GENERATOR
+    let avatar = await generateWithPollinations(prompt, req);
+
+    // ✅ HANDLE FAIL / TIMEOUT / 429
+    if (avatar?.code === 'RATE_LIMITED') {
+      console.log('⚡ Switching to Pixazo fallback...');
+      avatar = await generateAvatarWithPixazo(prompt);
+    }
+
+    // ✅ ALWAYS RETURN RESPONSE
+    return res.json(avatar);
+
   } catch (err) {
-    console.error('Avatar error:', err?.message, err?.body);
+    console.error('Avatar error:', err?.message);
     return res.status(500).json({
-      error: err?.message || 'Failed to generate avatar. Please try again.'
+      error: err?.message || 'Failed to generate avatar.'
     });
   }
 });
-  //   // Try Pollinations twice with different seeds (30s timeout each)
-  //   for (let attempt = 1; attempt <= 2; attempt++) {
-  //     try {
-  //       const seed = Math.floor(Math.random() * 999999);
-  //       const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
-  //       const controller = new AbortController();
-  //       const timer = setTimeout(() => controller.abort(), 30000);
-  //       console.log(`🌸 Avatar attempt ${attempt}/2 (seed:${seed})...`);
-  //       const pollRes = await fetch(pollinationsUrl, { signal: controller.signal, headers: { accept: 'image/*' } });
-  //       clearTimeout(timer);
-  //       if (pollRes.ok) {
-  //         const ct = pollRes.headers.get('content-type') || '';
-  //         if (ct.includes('image')) {
-  //           const buffer = Buffer.from(await pollRes.arrayBuffer());
-  //           if (buffer.length >= 3000) {
-  //             const previewUrl = saveBuffer('gen', buffer, '.png');
-  //             const absolutePreviewUrl = toAbsolutePublicUrl(previewUrl, req) || previewUrl;
-  //             console.log('✅ Avatar generated via Pollinations:', absolutePreviewUrl);
-  //             return res.json({ avatar_url: absolutePreviewUrl, avatar_preview_url: absolutePreviewUrl, avatar_source_url: pollinationsUrl, provider: 'pollinations', seed });
-  //           }
-  //         }
-  //       } else {
-  //         console.log(`⚠️ Pollinations attempt ${attempt} failed: ${pollRes.status}`);
-  //       }
-  //     } catch (e) {
-  //       console.log(`⚠️ Pollinations attempt ${attempt} error: ${e.message?.slice(0, 60)}`);
-  //     }
-  //     // Wait 2s before retry to avoid rate limit
-  //     if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
-  //   }
-
-  //   // INSTANT FALLBACK: Return Pollinations URL directly — browser will render it on load
-  //   // This is instant, no waiting, and the image generates when the browser fetches the URL
-  //   console.log('⚠️ Returning Pollinations URL as direct fallback (instant)');
-  //   const seed = Math.floor(Math.random() * 999999);
-  //   const directUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
-  //   return res.json({ avatar_url: directUrl, avatar_preview_url: directUrl, avatar_source_url: directUrl, provider: 'pollinations-direct', seed });
-  // } 
-//     const avatar = await generateAvatarWithPixazo(prompt);
-//    return res.json(avatar);
-//     catch (err) {
-//     console.error('Avatar error:', err?.message, err?.body);
-//     return res.status(500).json({ error: err?.message || 'Failed to generate avatar. Please try again.' });
-//   }
-// });
 
 // ===== In-memory job tracking for async generation =====
 const activeJobs = new Map();
