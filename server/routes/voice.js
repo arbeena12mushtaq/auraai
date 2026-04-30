@@ -25,11 +25,11 @@ const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const TTS_VOICES = {
-  'Soft & Gentle': 'en-US-SaraNeural',       // Soft, warm, mature female
-  'Warm & Rich': 'en-US-AriaNeural',          // Natural, warm female
-  'Bright & Cheerful': 'en-US-JennyNeural',   // Upbeat, cheerful female
-  'Calm & Soothing': 'en-US-EmmaNeural',      // Calm, soothing female
-  'Deep & Confident': 'en-US-GuyNeural',      // Deep male voice
+  'Soft & Feminine': 'en-US-SaraNeural',     // BEST choice
+  'Warm & Natural': 'en-US-AriaNeural',
+  'Calm & Mature': 'en-US-EmmaNeural',
+  'Flirty & Light': 'en-US-JennyNeural',
+  'Deep Male': 'en-US-GuyNeural',
 };
 
 function getBaseUrl(req) {
@@ -42,7 +42,7 @@ router.post('/tts', authMiddleware, async (req, res) => {
     const { text, voice } = req.body;
     if (!text) return res.status(400).json({ error: 'Text required' });
 
-    const voiceId = TTS_VOICES[voice] || 'en-US-AriaNeural';
+    const voiceId = TTS_VOICES[voice] || 'en-US-SaraNeural';
 
     // Clean text for TTS — remove emojis, asterisk actions, and special chars
     let cleanText = text
@@ -65,8 +65,15 @@ router.post('/tts', authMiddleware, async (req, res) => {
     console.log('🎤 TTS request (Edge): voice=', voiceId, 'textLen=', cleanText.length);
 
     const tts = new MsEdgeTTS();
-    await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-
+    await tts.setMetadata(
+  voiceId,
+  OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+  {
+    rate: '-10%',      // slower = more natural (VERY IMPORTANT)
+    pitch: '+5Hz',     // slightly feminine
+    volume: '+0%'
+  }
+);
     // toFile expects a DIRECTORY path, creates audio.mp3 inside it
     const tmpDir = path.join(uploadDir, `tts-${Date.now()}`);
     fs.mkdirSync(tmpDir, { recursive: true });
