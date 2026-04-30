@@ -51,7 +51,7 @@ app.use('/api/collections', require('./routes/collections'));
 app.use('/api/admin', require('./routes/admin'));
 const imageLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 2,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -60,7 +60,10 @@ const imageLimiter = rateLimit({
     code: 'IMAGE_RATE_LIMIT'
   }
 });
-app.use('/api/image', imageLimiter, require('./routes/imageGen'));app.use('/api/voice', require('./routes/voice'));
+app.use('/api/image', imageLimiter, require('./routes/imageGen'));
+app.use('/api/voice', require('./routes/voice'));
+app.use('/api/image', imageLimiter, require('./routes/imageGen'));
+app.use('/api/voice', require('./routes/voice'));
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
