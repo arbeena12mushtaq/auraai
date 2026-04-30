@@ -45,7 +45,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp/;
     const ext = allowed.test(path.extname(file.originalname).toLowerCase());
@@ -128,9 +128,11 @@ router.post('/', authMiddleware, upload.single('avatar'), async (req, res) => {
     let avatar_url = null;
     let avatar_seed = parseInt(req.body.avatar_seed) || 0;
     if (req.file) {
-      avatar_url = fileToDataUri(req.file);
-      console.log('🧑‍🎨 Stored uploaded avatar as data URI for persistence');
-    } else if (req.body.generated_avatar_url) {
+  const publicPath = `/uploads/${path.basename(req.file.path)}`;
+  avatar_url = normalizeAvatarUrl(publicPath, req);
+  console.log('🧑‍🎨 Stored uploaded avatar as public URL:', avatar_url);
+}
+    else if (req.body.generated_avatar_url) {
       avatar_url = normalizeAvatarUrl(req.body.generated_avatar_url, req);
       console.log('🧑‍🎨 Stored generated avatar URL:', avatar_url);
     }
