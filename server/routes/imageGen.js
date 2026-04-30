@@ -344,8 +344,13 @@ async function generateWithPollinations(prompt, req) {
 
     clearTimeout(timer);
 
-    if (!r.ok) throw new Error(`Pollinations failed: ${r.status}`);
+    if (r.status === 429) {
+  throw new Error('POLLINATIONS_RATE_LIMIT');
+}
 
+if (!r.ok) {
+  throw new Error(`Pollinations failed: ${r.status}`);
+}
     const buffer = Buffer.from(await r.arrayBuffer());
     if (buffer.length < 3000) throw new Error('Pollinations returned empty image');
 
@@ -359,18 +364,30 @@ async function generateWithPollinations(prompt, req) {
       provider: 'pollinations-cached',
       seed
     };
-  } catch (err) {
-    clearTimeout(timer);
-    console.error('Pollinations cache failed:', err.message);
+  } 
+  catch (err) {
+  clearTimeout(timer);
 
+  console.error('Pollinations cache failed:', err.message);
+
+  // 🚨 If rate limited → DO NOT return broken image
+  if (err.message.includes('429')) {
     return {
-      avatar_url: url,
-      avatar_preview_url: url,
-      avatar_source_url: url,
-      provider: 'pollinations-direct-fallback',
-      seed
+      success: false,
+      error: 'Image generation is busy. Please wait 30 seconds and try again.',
+      code: 'RATE_LIMITED'
     };
   }
+
+  // fallback only if NOT rate limit
+  return {
+    avatar_url: url,
+    avatar_preview_url: url,
+    avatar_source_url: url,
+    provider: 'pollinations-direct-fallback',
+    seed
+  };
+}
 }
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
@@ -402,11 +419,9 @@ router.post('/generate', authMiddleware, async (req, res) => {
       : `photorealistic close-up portrait of a beautiful ${ethnicityPrefix} ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
     console.log('🎨 Avatar prompt:', prompt);
-    console.log('🍌 Generating avatar via Pixazo Nano Banana 2...');
+    console.log('🌸 Generating avatar via Pollinations first...');
 
-    const avatar = await generateWithPollinations(prompt, req);
-    return res.json(avatar);
-
+    
   } catch (err) {
     console.error('Avatar error:', err?.message, err?.body);
     return res.status(500).json({
