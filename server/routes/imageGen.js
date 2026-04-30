@@ -326,20 +326,51 @@ console.log('✅ Regenerated avatar via Pixazo:', avatarUrl);
   return { avatarUrl, scene, result };
 }
 
-async function generateWithPollinations(prompt) {
-  const seed = Math.floor(Math.random() * 999999);
 
+async function generateWithPollinations(prompt, req) {
+  const seed = Math.floor(Math.random() * 999999);
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
 
-  console.log('🌸 Pollinations URL:', url);
+  console.log('🌸 Pollinations generating:', url);
 
-  return {
-    avatar_url: url,
-    avatar_preview_url: url,
-    avatar_source_url: url,
-    provider: 'pollinations',
-    seed
-  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const r = await fetch(url, {
+      signal: controller.signal,
+      headers: { accept: 'image/*,*/*;q=0.8' }
+    });
+
+    clearTimeout(timer);
+
+    if (!r.ok) throw new Error(`Pollinations failed: ${r.status}`);
+
+    const buffer = Buffer.from(await r.arrayBuffer());
+    if (buffer.length < 3000) throw new Error('Pollinations returned empty image');
+
+    const localPath = saveBuffer('avatar', buffer, '.png');
+    const publicUrl = toAbsolutePublicUrl(localPath, req);
+
+    return {
+      avatar_url: publicUrl,
+      avatar_preview_url: publicUrl,
+      avatar_source_url: url,
+      provider: 'pollinations-cached',
+      seed
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    console.error('Pollinations cache failed:', err.message);
+
+    return {
+      avatar_url: url,
+      avatar_preview_url: url,
+      avatar_source_url: url,
+      provider: 'pollinations-direct-fallback',
+      seed
+    };
+  }
 }
 router.post('/generate', authMiddleware, async (req, res) => {
   try {
@@ -373,7 +404,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
     console.log('🎨 Avatar prompt:', prompt);
     console.log('🍌 Generating avatar via Pixazo Nano Banana 2...');
 
-    const avatar = await generateWithPollinations(prompt);
+    const avatar = await generateWithPollinations(prompt, req);
     return res.json(avatar);
 
   } catch (err) {
