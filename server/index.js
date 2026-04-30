@@ -25,7 +25,7 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -49,9 +49,18 @@ app.use('/api/chat', require('./routes/chat'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/collections', require('./routes/collections'));
 app.use('/api/admin', require('./routes/admin'));
-app.use('/api/image', require('./routes/imageGen'));
-app.use('/api/voice', require('./routes/voice'));
-
+const imageLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 2,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Please wait before regenerating another image.',
+    code: 'IMAGE_RATE_LIMIT'
+  }
+});
+app.use('/api/image', imageLimiter, require('./routes/imageGen'));app.use('/api/voice', require('./routes/voice'));
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
