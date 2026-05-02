@@ -56,10 +56,26 @@ function AppContent() {
 
   const handleSubscribe = async (planId) => {
     try {
-      await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
-      await refreshUser();
-      navigate('home');
-    } catch {}
+      const data = await api('/payments/create-checkout', { method: 'POST', body: { plan: planId } });
+      if (data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      if (data.demo && data.success) {
+        await refreshUser();
+        navigate('home');
+        return;
+      }
+    } catch (err) {
+      // Fallback for admin
+      try {
+        await api('/payments/subscribe', { method: 'POST', body: { plan: planId } });
+        await refreshUser();
+        navigate('home');
+        return;
+      } catch {}
+      alert(err.error || 'Payment system is being set up. Please try again shortly.');
+    }
   };
 
   // Render page

@@ -146,11 +146,33 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                     audioSaved = true;
                   } catch (e) { console.warn('Voice save failed:', e); }
                 } else if (ttsData.useBrowserTTS) {
-                  // Fallback: speak through browser speakers
+                  // Fallback: speak through browser with proper voice selection
                   if ('speechSynthesis' in window) {
-                    const utter = new SpeechSynthesisUtterance(data.message.content);
-                    utter.rate = 0.95;
-                    utter.pitch = 1.1;
+                    const hints = ttsData.voiceHints || { gender: 'female', nameHints: ['samantha', 'sara', 'female', 'woman'] };
+                    const utter = new SpeechSynthesisUtterance(ttsData.text || data.message.content);
+                    utter.rate = 0.92;
+                    utter.pitch = hints.gender === 'male' ? 0.9 : 1.15;
+                    
+                    // Try to find a good voice matching the companion
+                    const pickVoice = () => {
+                      const voices = window.speechSynthesis.getVoices();
+                      if (!voices.length) return;
+                      const enVoices = voices.filter(v => v.lang.startsWith('en'));
+                      // Try matching by name hints
+                      for (const hint of (hints.nameHints || [])) {
+                        const match = enVoices.find(v => v.name.toLowerCase().includes(hint));
+                        if (match) { utter.voice = match; return; }
+                      }
+                      // Fallback: any English voice
+                      if (enVoices.length) utter.voice = enVoices[0];
+                    };
+                    
+                    // Voices may load async
+                    if (window.speechSynthesis.getVoices().length) {
+                      pickVoice();
+                    } else {
+                      window.speechSynthesis.onvoiceschanged = pickVoice;
+                    }
                     window.speechSynthesis.speak(utter);
                   }
                 }
@@ -286,16 +308,32 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         // Poll timed out — try recovering from DB
         const recovered = await recoverLatestMediaMessage('image', 15, 3000);
         if (!recovered) {
-          alert('Image is still generating. Refresh the chat in a moment to see it.');
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'text',
+            content: '📸 Your image is still generating! It might appear when you refresh the chat in a moment.',
+            created_at: new Date().toISOString(),
+          }]);
         }
       }
     } catch (err) {
       if (err.code === 'NO_TOKENS') {
         onNavigate('pricing');
+      } else if (err.code === 'IMAGE_RATE_LIMIT') {
+        // Rate limited — show clear message in chat
+        setMessages(p => [...p, {
+          role: 'assistant', type: 'text',
+          content: '⏳ Please wait a moment before generating another image. Try again in about 30 seconds!',
+          created_at: new Date().toISOString(),
+        }]);
       } else {
         const recovered = await recoverLatestMediaMessage('image', 10, 2500);
         if (!recovered) {
-          alert(err.error || 'Image generation failed. Please try again.');
+          // Show error in chat instead of alert (visible on mobile)
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'text',
+            content: `📸 Image generation didn't work this time — ${err.error || 'please try again in a moment'}. Tap the Image button to retry!`,
+            created_at: new Date().toISOString(),
+          }]);
         }
       }
     }
@@ -365,16 +403,30 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         const recoveredVideo = await recoverLatestMediaMessage('video', 15, 3000);
         const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image', 5, 2000);
         if (!recoveredVideo && !recoveredImage) {
-          alert('Video is still generating. Refresh the chat in a moment to see it.');
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'text',
+            content: '🎬 Your video is still generating! It might appear when you refresh the chat in a moment.',
+            created_at: new Date().toISOString(),
+          }]);
         }
       }
     } catch (err) {
       if (err.code === 'NO_TOKENS') onNavigate('pricing');
-      else {
+      else if (err.code === 'IMAGE_RATE_LIMIT') {
+        setMessages(p => [...p, {
+          role: 'assistant', type: 'text',
+          content: '⏳ Please wait a moment before generating another video. Try again in about 30 seconds!',
+          created_at: new Date().toISOString(),
+        }]);
+      } else {
         const recoveredVideo = await recoverLatestMediaMessage('video');
         const recoveredImage = recoveredVideo ? null : await recoverLatestMediaMessage('image');
         if (!recoveredVideo && !recoveredImage) {
-          alert(err.error || 'Video generation failed. Please try again.');
+          setMessages(p => [...p, {
+            role: 'assistant', type: 'text',
+            content: `🎬 Video generation didn't work this time — ${err.error || 'please try again in a moment'}. Tap the Video button to retry!`,
+            created_at: new Date().toISOString(),
+          }]);
         }
       }
     }
@@ -443,12 +495,14 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                           src={m.media_url}
                           alt="Generated"
                           className="aura-chat-media-img"
+                          loading="lazy"
                           onError={(e) => {
                             e.target.onerror = null;
                             e.target.style.display = 'none';
                             const fallback = document.createElement('div');
                             fallback.textContent = '📸 Image expired — tap to regenerate';
-                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;';
+                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;cursor:pointer;';
+                            fallback.onclick = () => handleGenerateImage();
                             e.target.parentNode.insertBefore(fallback, e.target.nextSibling);
                           }}
                         />
@@ -468,7 +522,8 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
                             e.target.style.display = 'none';
                             const fallback = document.createElement('div');
                             fallback.textContent = '🎬 Video expired — tap to regenerate';
-                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;';
+                            fallback.style.cssText = 'padding:12px;color:#a855f7;font-size:12px;text-align:center;cursor:pointer;';
+                            fallback.onclick = () => handleGenerateVideo();
                             e.target.parentNode.insertBefore(fallback, e.target.nextSibling);
                           }}
                         />
@@ -709,8 +764,10 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           display: block;
           margin-bottom: 6px;
           height: auto;
+          min-height: 80px;
           aspect-ratio: 9/16;
           object-fit: cover;
+          background: rgba(255,255,255,0.03);
         }
         .aura-chat-media-video {
           max-width: 100%;
@@ -719,6 +776,8 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
           display: block;
           margin-bottom: 6px;
           height: auto;
+          min-height: 80px;
+          background: rgba(255,255,255,0.03);
         }
 
         /* === AUDIO === */

@@ -25,11 +25,24 @@ const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const TTS_VOICES = {
-  'Soft & Feminine': 'en-US-SaraNeural',     // BEST choice
+  'Soft & Feminine': 'en-US-SaraNeural',
   'Warm & Natural': 'en-US-AriaNeural',
   'Calm & Mature': 'en-US-EmmaNeural',
   'Flirty & Light': 'en-US-JennyNeural',
   'Deep Male': 'en-US-GuyNeural',
+  'Friendly Female': 'en-US-MichelleNeural',
+  'Cute & Young': 'en-US-AnaNeural',
+};
+
+// Map voice categories for browser fallback
+const BROWSER_VOICE_HINTS = {
+  'en-US-SaraNeural': { gender: 'female', nameHints: ['samantha', 'sara', 'karen', 'female', 'woman'] },
+  'en-US-AriaNeural': { gender: 'female', nameHints: ['samantha', 'aria', 'karen', 'female', 'woman'] },
+  'en-US-EmmaNeural': { gender: 'female', nameHints: ['samantha', 'emma', 'victoria', 'female', 'woman'] },
+  'en-US-JennyNeural': { gender: 'female', nameHints: ['samantha', 'jenny', 'tessa', 'female', 'woman'] },
+  'en-US-GuyNeural': { gender: 'male', nameHints: ['daniel', 'guy', 'alex', 'male', 'man'] },
+  'en-US-MichelleNeural': { gender: 'female', nameHints: ['samantha', 'michelle', 'female', 'woman'] },
+  'en-US-AnaNeural': { gender: 'female', nameHints: ['samantha', 'ana', 'female', 'woman'] },
 };
 
 function getBaseUrl(req) {
@@ -67,10 +80,10 @@ router.post('/tts', authMiddleware, async (req, res) => {
     const tts = new MsEdgeTTS();
     await tts.setMetadata(
   voiceId,
-  OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
+  OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3,
   {
-    rate: '-10%',      // slower = more natural (VERY IMPORTANT)
-    pitch: '+5Hz',     // slightly feminine
+    rate: '-8%',       // slightly slower = more natural
+    pitch: '+3Hz',     // subtle femininity without sounding artificial
     volume: '+0%'
   }
 );
@@ -99,7 +112,14 @@ router.post('/tts', authMiddleware, async (req, res) => {
     res.json({ audio_url: audioUrl });
   } catch (e) {
     console.error('❌ Edge TTS error:', e.message, '— falling back to browser TTS');
-    res.json({ audio_url: null, useBrowserTTS: true, text: (req.body.text || '').substring(0, 4096) });
+    const voiceId = TTS_VOICES[req.body.voice] || 'en-US-SaraNeural';
+    const hints = BROWSER_VOICE_HINTS[voiceId] || BROWSER_VOICE_HINTS['en-US-SaraNeural'];
+    res.json({ 
+      audio_url: null, 
+      useBrowserTTS: true, 
+      text: (req.body.text || '').substring(0, 4096),
+      voiceHints: hints,
+    });
   }
 });
 

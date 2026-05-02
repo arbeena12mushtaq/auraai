@@ -24,8 +24,15 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+// Parse JSON for all routes EXCEPT Stripe webhook (needs raw body for signature verification)
+app.use((req, res, next) => {
+  if (req.path === '/api/payments/webhook') return next();
+  express.json({ limit: '25mb' })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/payments/webhook') return next();
+  express.urlencoded({ extended: true, limit: '25mb' })(req, res, next);
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -60,8 +67,6 @@ const imageLimiter = rateLimit({
     code: 'IMAGE_RATE_LIMIT'
   }
 });
-app.use('/api/image', imageLimiter, require('./routes/imageGen'));
-app.use('/api/voice', require('./routes/voice'));
 app.use('/api/image', imageLimiter, require('./routes/imageGen'));
 app.use('/api/voice', require('./routes/voice'));
 // Health check

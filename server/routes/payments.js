@@ -87,8 +87,9 @@ router.post('/create-checkout', authMiddleware, async (req, res) => {
   }
 });
 
-// Stripe Webhook
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+// Stripe Webhook — needs raw body for signature verification
+// Note: global express.json() is configured to skip this path
+router.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
   const stripeKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeKey) return res.status(400).send('No Stripe key');
 
