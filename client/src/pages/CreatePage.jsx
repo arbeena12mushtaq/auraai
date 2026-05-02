@@ -57,9 +57,9 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
     setGenerating(true);
     setError('');
     try {
-      // Add a 90-second timeout so the button never stays stuck
+      // Pollinations can take ~30s, and if it fails Pixazo fallback takes 30-90s more
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), 150000);
       const data = await api('/image/generate', {
         method: 'POST',
         body: {
@@ -80,7 +80,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
       }
     } catch (err) {
       if (err.name === 'AbortError') {
-        setError('Generation timed out. Please try again.');
+        setError('Generation is taking longer than expected. Please try again — it usually works on the second try!');
       } else {
         setError(err.error || 'Image generation failed. Try again or upload an image.');
       }
@@ -196,7 +196,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
                     {generating ? (
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span className="gen-spinner" />
-                        Generating (5-15s)...
+                        Generating (up to 60s)...
                       </span>
                     ) : '✨ Generate Avatar'}
                   </button>
