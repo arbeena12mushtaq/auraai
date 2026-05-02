@@ -166,8 +166,12 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
     const contextMessages = history.rows.reverse().map(m => ({ role: m.role, content: m.content }));
     const systemPrompt = buildSystemPrompt(companion);
 
-    // Try providers: OpenAI (gpt-4o-mini, best at roleplay) → Claude (fallback)
-    let aiResponse = await callOpenAI(systemPrompt, contextMessages);
+    // Try providers: Puter (free gpt-4o-mini) → OpenAI → Claude
+    let aiResponse = await callPuter(systemPrompt, contextMessages);
+    if (!aiResponse) {
+      console.log('⚠️ Puter failed, trying OpenAI...');
+      aiResponse = await callOpenAI(systemPrompt, contextMessages);
+    }
     if (!aiResponse) {
       console.log('⚠️ OpenAI failed, trying Claude...');
       aiResponse = await callAnthropic(systemPrompt, contextMessages);

@@ -77,41 +77,65 @@ router.post('/tts', authMiddleware, async (req, res) => {
 
     console.log('🎤 TTS request (Edge): voice=', voiceId, 'textLen=', cleanText.length);
 
-    const tts = new MsEdgeTTS();
-    await tts.setMetadata(
-  voiceId,
-  OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3,
-  {
-    rate: '-8%',       // slightly slower = more natural
-    pitch: '+3Hz',     // subtle femininity without sounding artificial
-    volume: '+0%'
-  }
-);
-    // toFile expects a DIRECTORY path, creates audio.mp3 inside it
-    const tmpDir = path.join(uploadDir, `tts-${Date.now()}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
+    // Try Edge TTS with retry
+    let generatedFile = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const tts = new MsEdgeTTS();
+        await tts.setMetadata(
+          voiceId,
+          OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3,
+          {
+            rate: '-8%',
+            pitch: '+3Hz',
+            volume: '+0%'
+          }
+        );
 
-    const result = await tts.toFile(tmpDir, cleanText.substring(0, 4096));
-    const generatedFile = result.audioFilePath || path.join(tmpDir, 'audio.mp3');
+        const tmpDir = path.join(uploadDir, `tts-${Date.now()}`);
+        fs.mkdirSync(tmpDir, { recursive: true });
 
-    if (!fs.existsSync(generatedFile)) {
-      throw new Error('Edge TTS did not generate audio file');
+        const result = await tts.toFile(tmpDir, cleanText.substring(0, 4096));
+        const filePath = result.audioFilePath || path.join(tmpDir, 'audio.mp3');
+
+        if (fs.existsSync(filePath)) {
+          const fn = `tts-${Date.now()}.mp3`;
+          const finalPath = path.join(uploadDir, fn);
+          fs.renameSync(filePath, finalPath);
+          try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
+          generatedFile = finalPath;
+          break;
+        } else {
+          try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
+          throw new Error('Edge TTS did not generate audio file');
+        }
+      } catch (retryErr) {
+        console.error(`❌ Edge TTS attempt ${attempt} failed:`, retryErr?.message || retryErr || 'unknown error');
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
     }
 
-    // Move the audio.mp3 to uploads with a clean filename
-    const fn = `tts-${Date.now()}.mp3`;
-    const finalPath = path.join(uploadDir, fn);
-    fs.renameSync(generatedFile, finalPath);
+    if (generatedFile) {
+      const stat = fs.statSync(generatedFile);
+      const fn = path.basename(generatedFile);
+      const audioUrl = `${getBaseUrl(req)}/uploads/${fn}`;
+      console.log('✅ TTS audio generated (Edge):', audioUrl, `(${Math.round(stat.size / 1024)}KB)`);
+      return res.json({ audio_url: audioUrl });
+    }
 
-    // Clean up temp directory
-    try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
-
-    const stat = fs.statSync(finalPath);
-    const audioUrl = `${getBaseUrl(req)}/uploads/${fn}`;
-    console.log('✅ TTS audio generated (Edge):', audioUrl, `(${Math.round(stat.size / 1024)}KB)`);
-    res.json({ audio_url: audioUrl });
+    // All retries failed — fall back to browser TTS
+    console.log('⚠️ Edge TTS failed after retries — falling back to browser TTS');
+    const hints = BROWSER_VOICE_HINTS[voiceId] || BROWSER_VOICE_HINTS['en-US-SaraNeural'];
+    res.json({ 
+      audio_url: null, 
+      useBrowserTTS: true, 
+      text: cleanText.substring(0, 4096),
+      voiceHints: hints,
+    });
   } catch (e) {
-    console.error('❌ Edge TTS error:', e.message, '— falling back to browser TTS');
+    console.error('❌ TTS route error:', e?.message || e || 'unknown');
     const voiceId = TTS_VOICES[req.body.voice] || 'en-US-SaraNeural';
     const hints = BROWSER_VOICE_HINTS[voiceId] || BROWSER_VOICE_HINTS['en-US-SaraNeural'];
     res.json({ 

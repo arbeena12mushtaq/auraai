@@ -334,7 +334,7 @@ async function generateWithPollinations(prompt, req) {
   console.log('🌸 Pollinations generating:', url);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
+  const timer = setTimeout(() => controller.abort(), 12000);
 
   try {
     const r = await fetch(url, {
@@ -406,11 +406,12 @@ router.post('/generate', authMiddleware, async (req, res) => {
     let ethnicityPrefix = '';
 
     if (/\bebony\b/i.test(desc)) ethnicityPrefix = 'dark-skinned Black African';
-    if (/\bafrican\b/i.test(desc)) ethnicityPrefix = 'Black African';
-    if (/\blatina\b/i.test(desc)) ethnicityPrefix = 'Latina Hispanic';
-    if (/\basian\b/i.test(desc)) ethnicityPrefix = 'East Asian';
-    if (/\bindian\b/i.test(desc)) ethnicityPrefix = 'South Asian Indian';
-    if (/\barab\b/i.test(desc)) ethnicityPrefix = 'Middle Eastern Arab';
+    else if (/\bblack\b/i.test(desc) && !/\bblack\s+(hair|dress|outfit|clothes|top|shirt|eyes|cat|wings?)\b/i.test(desc)) ethnicityPrefix = 'dark-skinned Black';
+    else if (/\bafrican\b/i.test(desc)) ethnicityPrefix = 'Black African';
+    else if (/\blatina\b/i.test(desc)) ethnicityPrefix = 'Latina Hispanic';
+    else if (/\basian\b/i.test(desc)) ethnicityPrefix = 'East Asian';
+    else if (/\bindian\b/i.test(desc)) ethnicityPrefix = 'South Asian Indian';
+    else if (/\barab\b/i.test(desc)) ethnicityPrefix = 'Middle Eastern Arab';
 
     const prompt = isAnime
       ? `anime character portrait of a ${ethnicityPrefix} ${gender}, ${desc}, beautiful polished anime art style, vibrant colors, detailed expressive eyes, front facing, looking at camera, clean background`
