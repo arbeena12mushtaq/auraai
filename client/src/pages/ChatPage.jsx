@@ -69,13 +69,15 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
     // Check browser support
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!navigator.mediaDevices?.getUserMedia) {
-      alert('Voice recording is not supported on this browser.');
+      alert('Voice recording requires a real browser. If you\'re in an app, tap the ⋮ menu and choose "Open in Browser".');
       return;
     }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' });
+      const recordMime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const recordExt = recordMime.includes('mp4') ? '.mp4' : '.webm';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: recordMime });
       const audioChunks = [];
       mediaRecorderRef.current = mediaRecorder;
 
@@ -99,27 +101,46 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         stream.getTracks().forEach(t => t.stop());
         setRecording(false);
 
-        // Create user voice note blob
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        const userAudioUrl = URL.createObjectURL(audioBlob);
+        // Create user voice note blob with correct MIME type
+        const audioBlob = new Blob(audioChunks, { type: recordMime });
+        const tempBlobUrl = URL.createObjectURL(audioBlob);
 
         // Wait a moment for speech recognition to finish
         await new Promise(r => setTimeout(r, 500));
         const finalTranscript = transcript || 'voice message';
 
-        // Show user's voice note as audio bubble (like WhatsApp)
+        // Show user's voice note immediately with temp blob URL (instant feedback)
         setMessages(prev => [...prev, {
           role: 'user', content: '🎤', type: 'vn',
-          media_url: userAudioUrl,
+          media_url: tempBlobUrl,
           created_at: new Date().toISOString(),
         }]);
         setLoading(true);
+
+        // Upload audio blob to server for persistence
+        let persistentAudioUrl = null;
+        try {
+          const token = getToken();
+          const formData = new FormData();
+          formData.append('audio', audioBlob, `voice-note${recordExt}`);
+          const uploadRes = await fetch('/api/voice/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            persistentAudioUrl = uploadData.audio_url;
+          }
+        } catch (e) { console.warn('Voice upload failed, using blob URL:', e); }
+
+        const userAudioUrl = persistentAudioUrl || tempBlobUrl;
 
         try {
           // Send the transcribed text to AI (hidden from UI — user only sees audio bubble)
           const data = await api(`/chat/${companion.id}`, { method: 'POST', body: { content: finalTranscript } });
 
-          // Mark the user's message as voice note in DB (so reload shows audio bubble, not text)
+          // Mark the user's message as voice note in DB with persistent URL
           if (data.userMessage?.id) {
             try { await api('/voice/save', { method: 'POST', body: { companionId: companion.id, audioUrl: userAudioUrl, messageId: data.userMessage.id, isUser: true } }); } catch {}
           }

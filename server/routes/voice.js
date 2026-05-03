@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const nodeCrypto = require('crypto');
+const multer = require('multer');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 
@@ -182,6 +183,39 @@ router.post('/save', authMiddleware, async (req, res) => {
   } catch (e) {
     console.error('Save voice msg error:', e.message);
     res.status(500).json({ error: 'Failed to save voice message' });
+  }
+});
+
+// ===== Upload user voice note (persists audio blob to disk) =====
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const ext = file.mimetype?.includes('mp4') ? '.mp4'
+        : file.mimetype?.includes('ogg') ? '.ogg'
+        : '.webm';
+      cb(null, `vn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only audio files are allowed'), false);
+    }
+  },
+});
+
+router.post('/upload', authMiddleware, upload.single('audio'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No audio file received' });
+    const audioUrl = `${getBaseUrl(req)}/uploads/${req.file.filename}`;
+    console.log('🎤 Voice note uploaded:', audioUrl, `(${Math.round(req.file.size / 1024)}KB)`);
+    return res.json({ audio_url: audioUrl });
+  } catch (e) {
+    console.error('Voice upload error:', e.message);
+    return res.status(500).json({ error: 'Failed to upload voice note' });
   }
 });
 
