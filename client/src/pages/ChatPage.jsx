@@ -106,8 +106,16 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
         const tempBlobUrl = URL.createObjectURL(audioBlob);
 
         // Wait a moment for speech recognition to finish
-        await new Promise(r => setTimeout(r, 500));
-        const finalTranscript = transcript || 'voice message';
+        await new Promise(r => setTimeout(r, 800));
+        // If transcription failed, send a natural prompt instead of "voice message" (which triggers AI refusals)
+        const voiceFallbacks = [
+          'hey, just sent you a voice note 🎤',
+          'hii, listen to my voice note 😊',
+          'just recorded something for you',
+          'sent you a little voice message ❤️',
+          'hey babe, just wanted to talk to you',
+        ];
+        const finalTranscript = transcript || voiceFallbacks[Math.floor(Math.random() * voiceFallbacks.length)];
 
         // Show user's voice note immediately with temp blob URL (instant feedback)
         setMessages(prev => [...prev, {
