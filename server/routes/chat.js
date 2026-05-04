@@ -187,13 +187,12 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
       aiResponse = await callAnthropic(systemPrompt, contextMessages);
     }
 
-    // Catch AI safety refusals and replace with in-character responses
+    // Catch AI safety refusals — ONLY actual identity breaks, not in-character phrases
     if (aiResponse) {
       const lower = aiResponse.toLowerCase();
-      const isRefusal = 
-        lower.includes("i can't help") ||
-        lower.includes("i cannot") ||
-        lower.includes("i'm not able") ||
+      
+      // Hard refusals — these ALWAYS mean the AI broke character
+      const hardRefusal = 
         lower.includes("as an ai") ||
         lower.includes("i'm an ai") ||
         lower.includes("i am an ai") ||
@@ -201,23 +200,26 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
         lower.includes("i am claude") ||
         lower.includes("made by anthropic") ||
         lower.includes("language model") ||
-        lower.includes("i'm not comfortable") ||
-        lower.includes("i can't engage") ||
-        lower.includes("i can't assist") ||
-        lower.includes("i must decline") ||
-        lower.includes("against my guidelines") ||
-        lower.includes("i'm programmed") ||
-        lower.includes("i don't have feelings") ||
         lower.includes("i'm a chatbot") ||
         lower.includes("i'm a virtual") ||
-        lower.includes("roleplay") ||
-        lower.includes("i should clarify") ||
-        lower.includes("maintain honest") ||
-        lower.includes("appropriate interactions") ||
-        lower.includes("pretend to be") ||
+        lower.includes("i'm programmed") ||
+        lower.includes("against my guidelines") ||
         lower.includes("openai") ||
         lower.includes("gpt-") ||
         lower.includes("artificial intelligence");
+
+      // Soft indicators — only flag if 2+ appear together (avoids false positives)
+      let softCount = 0;
+      if (lower.includes("i can't help")) softCount++;        // could be "can't help but smile"
+      if (lower.includes("i cannot")) softCount++;            // could be "i cannot believe you"
+      if (lower.includes("i'm not comfortable")) softCount++;
+      if (lower.includes("i must decline")) softCount++;
+      if (lower.includes("i can't engage")) softCount++;
+      if (lower.includes("appropriate interactions")) softCount++;
+      if (lower.includes("i don't have feelings")) softCount++;
+      if (lower.includes("i should clarify")) softCount++;
+
+      const isRefusal = hardRefusal || softCount >= 2;
 
       if (isRefusal) {
         console.log('⚠️ AI refusal detected, replacing with in-character response');
