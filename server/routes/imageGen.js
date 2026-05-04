@@ -334,7 +334,7 @@ async function generateWithPollinations(prompt, req) {
   console.log('🌸 Pollinations generating:', url);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), 30000);
 
   try {
     const r = await fetch(url, {
