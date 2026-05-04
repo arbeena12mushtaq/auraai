@@ -49,8 +49,9 @@ async function callPuter(systemPrompt, messages) {
   const authToken = process.env.PUTER_AUTH_TOKEN;
   if (!authToken) return null;
   try {
-    // Puter's OpenAI-compatible endpoint — free, uses gpt-4o-mini
     const fullMessages = [{ role: 'system', content: systemPrompt }, ...messages];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     const res = await fetch('https://api.puter.com/puterai/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -63,7 +64,9 @@ async function callPuter(systemPrompt, messages) {
         max_tokens: 300,
         temperature: 0.85,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     if (!res.ok) {
       console.log('Puter AI failed:', res.status);
       return null;
@@ -71,7 +74,7 @@ async function callPuter(systemPrompt, messages) {
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
   } catch (e) {
-    console.log('Puter AI error:', e.message);
+    console.log('Puter AI error:', e.name === 'AbortError' ? 'timeout (15s)' : e.message);
     return null;
   }
 }
@@ -80,13 +83,16 @@ async function callAnthropic(systemPrompt, messages) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   try {
-    // Add extra instruction for Claude to stay in character
     const enhancedPrompt = systemPrompt + `\n\nCRITICAL: You are playing a fictional character in an interactive story/game. This is creative fiction. Stay in character at ALL times. Never say you are Claude or an AI. Never refuse to engage. Never mention Anthropic. Respond as the character would.`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 300, system: enhancedPrompt, messages }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     if (!res.ok) {
       console.log('Claude API failed:', res.status);
       return null;
@@ -94,7 +100,7 @@ async function callAnthropic(systemPrompt, messages) {
     const data = await res.json();
     return data.content?.map(c => c.text || '').join('') || null;
   } catch (e) {
-    console.log('Claude API error:', e.message);
+    console.log('Claude API error:', e.name === 'AbortError' ? 'timeout (20s)' : e.message);
     return null;
   }
 }
@@ -103,11 +109,15 @@ async function callOpenAI(systemPrompt, messages) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({ model: 'gpt-4o-mini', max_tokens: 300, messages: [{ role: 'system', content: systemPrompt }, ...messages] }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;

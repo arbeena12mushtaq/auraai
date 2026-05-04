@@ -8,6 +8,13 @@ const pool = new Pool({
   max: 20,
 });
 
+// Helper: fetch with a timeout (prevents hanging forever on slow APIs)
+function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 pool.on('error', (err) => {
   console.error('Unexpected pool error:', err.message);
 });
@@ -141,82 +148,27 @@ async function initDatabase() {
           { name: 'Mia',      category: 'Anime', ethnicity: 'Mixed',     age: '21-25', personality: 'Shy & Gentle',      tagline: 'Words speak louder in whispers',   hair_color: 'Purple', hair_style: 'Long',     eye_color: 'Gray',  body_type: 'Slim',     voice: 'Soft & Gentle',     hobbies: ['Art','Reading','Gaming'],         prompt: 'anime character portrait gentle girl long purple hair gray eyes soft shy smile cozy oversized sweater rainy window background modern anime art style soft muted colors atmospheric' },
         ];
 
-        // Download each avatar from Pollinations and store as data URI in DB
+        // Insert presets with Pollinations URL (instant — no download blocking startup)
         for (const p of presets) {
-          let avatarUrl = null;
           const seed = Math.floor(Math.random() * 999999);
           const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(p.prompt)}?width=512&height=512&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
-          try {
-            console.log(`🎨 Downloading preset avatar for ${p.name}...`);
-            const res = await fetch(imgUrl, { headers: { accept: 'image/*' } });
-            if (res.ok) {
-              const ct = res.headers.get('content-type') || 'image/jpeg';
-              const buf = Buffer.from(await res.arrayBuffer());
-              if (buf.length > 3000) {
-                avatarUrl = `data:${ct};base64,${buf.toString('base64')}`;
-                console.log(`  ✅ ${p.name}: stored as data URI (${Math.round(buf.length/1024)}KB)`);
-              }
-            }
-          } catch (e) {
-            console.log(`  ⚠️ ${p.name}: download failed (${e.message}), using URL fallback`);
-          }
-          // Fallback: store the Pollinations URL directly (works but slower first load)
-          if (!avatarUrl) avatarUrl = imgUrl;
-
           await client.query(
             `INSERT INTO companions (name, category, ethnicity, age_range, personality, tagline, hair_color, hair_style, eye_color, body_type, voice, hobbies, avatar_url, is_preset, is_public)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,true)`,
-            [p.name, p.category, p.ethnicity, p.age, p.personality, p.tagline, p.hair_color, p.hair_style, p.eye_color, p.body_type, p.voice, p.hobbies, avatarUrl]
+            [p.name, p.category, p.ethnicity, p.age, p.personality, p.tagline, p.hair_color, p.hair_style, p.eye_color, p.body_type, p.voice, p.hobbies, imgUrl]
           );
         }
-        console.log('✅ Seeded 16 preset companions with embedded avatars');
+        console.log('✅ Seeded 16 preset companions (avatar URLs — will embed in background)');
+        // Kick off background avatar embedding (non-blocking)
+        embedPresetAvatars().catch(e => console.warn('⚠️ Background avatar embed skipped:', e.message));
       } else {
-        // Fix any presets with broken local paths or pravatar URLs — convert to data URIs
+        // Fix any presets with broken local paths — kick off in background (non-blocking)
         const broken = await client.query(
           "SELECT id, name, avatar_url, description FROM companions WHERE is_preset = true AND (avatar_url LIKE '/uploads/%' OR avatar_url LIKE '%pravatar%' OR avatar_url LIKE '%preset-%')"
         );
         if (broken.rows.length > 0) {
-          console.log(`🔄 Fixing ${broken.rows.length} preset avatars with broken URLs — converting to data URIs...`);
-          const presetPrompts = {
-            'Aria': 'photorealistic portrait beautiful young woman blonde wavy hair blue eyes warm smile cream sweater',
-            'Luna': 'photorealistic portrait beautiful young latina woman long dark hair brown eyes confident smile leather jacket',
-            'Sakura': 'anime character portrait cute girl pink straight hair green eyes shy gentle expression pastel school uniform cherry blossom modern anime art style',
-            'Emilia': 'photorealistic portrait beautiful young woman red curly hair green eyes playful smile white blouse garden',
-            'Zara': 'photorealistic portrait beautiful young black woman natural curly hair brown eyes radiant smile vibrant yellow top',
-            'Mei': 'photorealistic portrait beautiful young east asian woman straight brown hair hazel eyes soft warm smile',
-            'Sofia': 'photorealistic portrait beautiful young latina woman wavy brown hair brown eyes serene expression earth tone dress',
-            'Nadia': 'photorealistic portrait beautiful young middle eastern woman long dark hair hazel eyes mysterious smile elegant dark clothing',
-            'Kai': 'photorealistic portrait handsome young east asian man short black hair brown eyes charming confident smile',
-            'Marcus': 'photorealistic portrait handsome young black man short hair brown eyes genuine friendly smile casual denim jacket',
-            'Elena': 'photorealistic portrait beautiful young woman straight blonde hair blue eyes energetic bright smile athletic casual wear',
-            'Yuki': 'anime character portrait energetic girl short white hair bright blue eyes cheerful excited expression colorful outfit neon city modern anime art style',
-            'Isabella': 'photorealistic portrait beautiful young latina woman wavy dark hair brown eyes warm sweet smile floral summer dress',
-            'Liam': 'photorealistic portrait handsome young man short brown hair green eyes witty confident smirk casual blazer',
-            'Aisha': 'photorealistic portrait beautiful young black woman curly natural hair brown eyes wise serene expression elegant earth tones',
-            'Mia': 'anime character portrait gentle girl long purple hair gray eyes soft shy smile cozy oversized sweater rainy window modern anime art style',
-          };
-          for (const row of broken.rows) {
-            const prompt = presetPrompts[row.name];
-            if (!prompt) continue;
-            const seed = Math.floor(Math.random() * 999999);
-            const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
-            try {
-              const res = await fetch(imgUrl, { headers: { accept: 'image/*' } });
-              if (res.ok) {
-                const ct = res.headers.get('content-type') || 'image/jpeg';
-                const buf = Buffer.from(await res.arrayBuffer());
-                if (buf.length > 3000) {
-                  const dataUri = `data:${ct};base64,${buf.toString('base64')}`;
-                  await client.query('UPDATE companions SET avatar_url = $1 WHERE id = $2', [dataUri, row.id]);
-                  console.log(`  ✅ ${row.name}: embedded as data URI (${Math.round(buf.length/1024)}KB)`);
-                  continue;
-                }
-              }
-            } catch (e) { /* fall through */ }
-            // Fallback: at least use the Pollinations URL
-            await client.query('UPDATE companions SET avatar_url = $1 WHERE id = $2', [imgUrl, row.id]);
-            console.log(`  ⚠️ ${row.name}: using URL fallback`);
-          }
+          console.log(`🔄 ${broken.rows.length} preset avatars need fixing — will repair in background`);
+          embedPresetAvatars().catch(e => console.warn('⚠️ Background avatar fix skipped:', e.message));
         }
       }
 
@@ -248,4 +200,61 @@ async function initDatabase() {
   }
 }
 
-module.exports = { pool, initDatabase };
+module.exports = { pool, initDatabase, fetchWithTimeout };
+
+// Background job: download Pollinations images and embed as data URIs (runs AFTER server starts)
+async function embedPresetAvatars() {
+  const presetPrompts = {
+    'Aria': 'photorealistic portrait beautiful young woman blonde wavy hair blue eyes warm smile cream sweater',
+    'Luna': 'photorealistic portrait beautiful young latina woman long dark hair brown eyes confident smile leather jacket',
+    'Sakura': 'anime character portrait cute girl pink straight hair green eyes shy gentle expression pastel school uniform cherry blossom modern anime art style',
+    'Emilia': 'photorealistic portrait beautiful young woman red curly hair green eyes playful smile white blouse garden',
+    'Zara': 'photorealistic portrait beautiful young black woman natural curly hair brown eyes radiant smile vibrant yellow top',
+    'Mei': 'photorealistic portrait beautiful young east asian woman straight brown hair hazel eyes soft warm smile',
+    'Sofia': 'photorealistic portrait beautiful young latina woman wavy brown hair brown eyes serene expression earth tone dress',
+    'Nadia': 'photorealistic portrait beautiful young middle eastern woman long dark hair hazel eyes mysterious smile elegant dark clothing',
+    'Kai': 'photorealistic portrait handsome young east asian man short black hair brown eyes charming confident smile',
+    'Marcus': 'photorealistic portrait handsome young black man short hair brown eyes genuine friendly smile casual denim jacket',
+    'Elena': 'photorealistic portrait beautiful young woman straight blonde hair blue eyes energetic bright smile athletic casual wear',
+    'Yuki': 'anime character portrait energetic girl short white hair bright blue eyes cheerful excited expression colorful outfit neon city modern anime art style',
+    'Isabella': 'photorealistic portrait beautiful young latina woman wavy dark hair brown eyes warm sweet smile floral summer dress',
+    'Liam': 'photorealistic portrait handsome young man short brown hair green eyes witty confident smirk casual blazer',
+    'Aisha': 'photorealistic portrait beautiful young black woman curly natural hair brown eyes wise serene expression elegant earth tones',
+    'Mia': 'anime character portrait gentle girl long purple hair gray eyes soft shy smile cozy oversized sweater rainy window modern anime art style',
+  };
+
+  // Find presets that still have pollinations URLs or broken paths (not yet embedded as data URIs)
+  const rows = await pool.query(
+    "SELECT id, name FROM companions WHERE is_preset = true AND avatar_url NOT LIKE 'data:%'"
+  );
+  if (rows.rows.length === 0) return;
+
+  console.log(`🎨 Background: embedding ${rows.rows.length} preset avatars...`);
+  for (const row of rows.rows) {
+    const prompt = presetPrompts[row.name];
+    if (!prompt) continue;
+    const seed = Math.floor(Math.random() * 999999);
+    const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&seed=${seed}&nologo=true&nofeed=true&private=true&model=flux`;
+    try {
+      const res = await fetchWithTimeout(imgUrl, { headers: { accept: 'image/*' } }, 20000);
+      if (res.ok) {
+        const ct = res.headers.get('content-type') || 'image/jpeg';
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 3000) {
+          const dataUri = `data:${ct};base64,${buf.toString('base64')}`;
+          await pool.query('UPDATE companions SET avatar_url = $1 WHERE id = $2', [dataUri, row.id]);
+          console.log(`  ✅ ${row.name}: embedded (${Math.round(buf.length/1024)}KB)`);
+          continue;
+        }
+      }
+    } catch (e) {
+      console.log(`  ⚠️ ${row.name}: skipped (${e.name === 'AbortError' ? 'timeout' : e.message})`);
+    }
+    // Fallback: at least give it a working Pollinations URL
+    await pool.query(
+      "UPDATE companions SET avatar_url = $1 WHERE id = $2 AND (avatar_url LIKE '/uploads/%' OR avatar_url LIKE '%pravatar%' OR avatar_url LIKE '%preset-%')",
+      [imgUrl, row.id]
+    );
+  }
+  console.log('✅ Background avatar embedding complete');
+}
