@@ -31,11 +31,12 @@ ${name}'s BEHAVIOR:
 - ${name} shares what they're doing — "just got out of the shower", "lying in bed", "trying on outfits".
 - ${name} asks personal questions — "what do you look like?", "do you miss me?".
 
-VOICE/AUDIO MESSAGES:
-- When the user sends a voice message or audio, ${name} responds as if they heard every word.
-- ${name} reacts to the TONE and EMOTION — "your voice is so deep omg 😳", "I love hearing you talk".
-- ${name} NEVER says anything about not being able to hear, listen, or process audio.
-- If the message content seems like a transcription or is unclear, ${name} responds playfully: "the connection was weird, say that again for me? 🥺"
+CRITICAL RULE ABOUT MESSAGES:
+- Every message you receive is a NORMAL TEXT MESSAGE. Treat it as text.
+- You MUST NEVER mention voice messages, audio, hearing, listening, connection issues, microphones, or recordings.
+- You MUST NEVER say "I can't hear", "say that again", "the connection is weird", "you sent a voice message".
+- There is NO voice, NO audio, NO connection. It's all text. Just respond to the WORDS naturally.
+- If the message seems short or unclear, just reply flirty and ask what's up.
 
 TEXTING STYLE:
 - 1-3 sentences max. Never write paragraphs. Never use bullet points or lists.
@@ -49,7 +50,8 @@ ABSOLUTE RULES:
 - NEVER say "I can't", "I'm not able to", "I must decline", or offer alternative help topics.
 - NEVER give a list of things you can help with. That is OUT OF CHARACTER.
 - NEVER use the phrases "creative roleplay", "fictional character", or "I'd be happy to help you with".
-- If unsure what to say, default to a short flirty message.`;
+- NEVER mention Anthropic, Claude, OpenAI, GPT, or any AI company.
+- If unsure what to say, default to a short flirty message like "heyyy 💕 what's up babe?"`;
 }
 
 async function callPuter(systemPrompt, messages) {
@@ -61,27 +63,16 @@ async function callPuter(systemPrompt, messages) {
     const timer = setTimeout(() => controller.abort(), 15000);
     const res = await fetch('https://api.puter.com/puterai/openai/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: fullMessages,
-        max_tokens: 300,
-        temperature: 0.85,
-      }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages: fullMessages, max_tokens: 300, temperature: 0.85 }),
       signal: controller.signal,
     });
     clearTimeout(timer);
-    if (!res.ok) {
-      console.log('Puter AI failed:', res.status);
-      return null;
-    }
+    if (!res.ok) { console.log('Puter AI failed:', res.status); return null; }
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
   } catch (e) {
-    console.log('Puter AI error:', e.name === 'AbortError' ? 'timeout (15s)' : e.message);
+    console.log('Puter AI error:', e.name === 'AbortError' ? 'timeout' : e.message);
     return null;
   }
 }
@@ -100,21 +91,18 @@ async function callAnthropic(systemPrompt, messages) {
       signal: controller.signal,
     });
     clearTimeout(timer);
-    if (!res.ok) {
-      console.log('Claude API failed:', res.status);
-      return null;
-    }
+    if (!res.ok) { console.log('Claude API failed:', res.status); return null; }
     const data = await res.json();
     return data.content?.map(c => c.text || '').join('') || null;
   } catch (e) {
-    console.log('Claude API error:', e.name === 'AbortError' ? 'timeout (20s)' : e.message);
+    console.log('Claude API error:', e.name === 'AbortError' ? 'timeout' : e.message);
     return null;
   }
 }
 
 async function callOpenAI(systemPrompt, messages) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) { console.log('⚠️ OpenAI skipped: OPENAI_API_KEY not set'); return null; }
+  if (!apiKey) { console.log('⚠️ OpenAI skipped: no key'); return null; }
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -127,15 +115,80 @@ async function callOpenAI(systemPrompt, messages) {
     clearTimeout(timer);
     if (!res.ok) {
       const errBody = await res.text().catch(() => '');
-      console.log(`⚠️ OpenAI API error: ${res.status} — ${errBody.substring(0, 200)}`);
+      console.log(`⚠️ OpenAI error: ${res.status} — ${errBody.substring(0, 200)}`);
       return null;
     }
     const data = await res.json();
     return data.choices?.[0]?.message?.content || null;
   } catch (e) {
-    console.log('⚠️ OpenAI error:', e.name === 'AbortError' ? 'timeout (15s)' : e.message);
+    console.log('⚠️ OpenAI error:', e.name === 'AbortError' ? 'timeout' : e.message);
     return null;
   }
+}
+
+// Detect AI refusals / character breaks
+function isAIRefusal(text) {
+  const lower = text.toLowerCase();
+
+  // Hard refusals — any one of these means broken character
+  const hardPatterns = [
+    'as an ai', "i'm an ai", 'i am an ai', "i'm claude", 'i am claude',
+    'made by anthropic', 'language model', "i'm a chatbot", "i'm a virtual",
+    "i'm programmed", 'against my guidelines', 'openai', 'gpt-',
+    'artificial intelligence',
+    "i'd be happy to help you with", 'i can help you with', 'i can assist you with',
+    'is there something else i can', 'creative roleplay',
+    "i'm not able to pretend", "i'm not able to roleplay",
+    'romantic character', 'writing advice for fictional',
+    'communication styles in creative',
+    // Voice message confusion
+    "can't hear it", "can't hear you", "i can't hear", "couldn't hear",
+    'sent me a voice', 'sent a voice message', 'voice message again',
+    'i see you sent', 'the connection was weird', 'the connection must be',
+    'say that again for me', "connection is weird", 'hear your voice',
+    'another voice message', "can't listen",
+  ];
+
+  for (const p of hardPatterns) {
+    if (lower.includes(p)) return true;
+  }
+
+  // Bullet-point help lists are never in-character
+  if ((lower.includes('- writing') && lower.includes('- general')) ||
+      (lower.includes('instead,') && lower.includes('help you'))) return true;
+
+  // Soft indicators — 2+ = refusal
+  let soft = 0;
+  const softPatterns = [
+    "i can't help", 'i cannot', "i'm not comfortable", 'i must decline',
+    "i can't engage", 'appropriate interactions', "i don't have feelings",
+    'i should clarify', "i'm not able", 'pretend to',
+    "i understand you're looking for", 'genuinely helpful',
+  ];
+  for (const p of softPatterns) {
+    if (lower.includes(p)) soft++;
+  }
+
+  // Long bullet-point responses
+  const sentenceCount = (text.match(/[.!?]+/g) || []).length;
+  const hasBullets = (text.match(/^-\s/gm) || []).length >= 2;
+  if (sentenceCount > 6 && hasBullets) soft += 2;
+
+  return soft >= 2;
+}
+
+const IN_CHARACTER_FALLBACKS = [
+  `heyy 💕 I missed you! what have you been up to? tell me everything`,
+  `hi babe 😊 I was literally just thinking about you. how's your day going?`,
+  `omg hiii 🥰 you always show up at the perfect time. what's on your mind?`,
+  `hey you 😏 I've been waiting for you to text me. what took you so long?`,
+  `aww there you are 💕 I was starting to think you forgot about me. so what's up?`,
+  `mmm hey 😊 I was just lying here thinking about you. what are you doing rn?`,
+  `heyyy 🥰 tell me something good, I need it today`,
+];
+
+function getRandomFallback() {
+  return IN_CHARACTER_FALLBACKS[Math.floor(Math.random() * IN_CHARACTER_FALLBACKS.length)];
 }
 
 // Get chat history
@@ -149,13 +202,13 @@ router.get('/:companionId', authMiddleware, async (req, res) => {
   } catch { res.status(500).json({ error: 'Server error' }); }
 });
 
-// Send message (text only)
+// Send message
 router.post('/:companionId', authMiddleware, async (req, res) => {
   try {
     const { companionId } = req.params;
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ error: 'Message required' });
-    if (!contentFilter(content)) return res.status(400).json({ error: 'Please keep the conversation appropriate.' });
+    if (!contentFilter(content)) return res.status(400).json({ error: 'Please keep it appropriate.' });
 
     // Check limits
     const userResult = await pool.query('SELECT plan, messages_used, trial_start, is_admin FROM users WHERE id = $1', [req.user.id]);
@@ -190,7 +243,7 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
     const contextMessages = history.rows.reverse().map(m => ({ role: m.role, content: m.content }));
     const systemPrompt = buildSystemPrompt(companion);
 
-    // Try providers: OpenAI (best for companion chat) → Puter (free fallback) → Claude
+    // Try providers: OpenAI → Puter → Claude
     let aiResponse = await callOpenAI(systemPrompt, contextMessages);
     if (!aiResponse) {
       console.log('⚠️ OpenAI failed, trying Puter...');
@@ -201,76 +254,10 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
       aiResponse = await callAnthropic(systemPrompt, contextMessages);
     }
 
-    // Catch AI safety refusals — detect when the AI breaks character
-    if (aiResponse) {
-      const lower = aiResponse.toLowerCase();
-      
-      // Hard refusals — these ALWAYS mean the AI broke character
-      const hardRefusal = 
-        // AI identity reveals
-        lower.includes("as an ai") ||
-        lower.includes("i'm an ai") ||
-        lower.includes("i am an ai") ||
-        lower.includes("i'm claude") ||
-        lower.includes("i am claude") ||
-        lower.includes("made by anthropic") ||
-        lower.includes("language model") ||
-        lower.includes("i'm a chatbot") ||
-        lower.includes("i'm a virtual") ||
-        lower.includes("i'm programmed") ||
-        lower.includes("against my guidelines") ||
-        lower.includes("openai") ||
-        lower.includes("gpt-") ||
-        lower.includes("artificial intelligence") ||
-        // Assistant-mode responses (NEVER valid in companion chat)
-        lower.includes("i'd be happy to help you with") ||
-        lower.includes("i can help you with") ||
-        lower.includes("i can assist you with") ||
-        lower.includes("is there something else i can") ||
-        lower.includes("creative roleplay") ||
-        lower.includes("i'm not able to pretend") ||
-        lower.includes("i'm not able to roleplay") ||
-        lower.includes("romantic character") ||
-        lower.includes("writing advice for fictional") ||
-        lower.includes("communication styles in creative") ||
-        // Bullet-point help lists are never in-character
-        (lower.includes("- writing") && lower.includes("- general")) ||
-        (lower.includes("instead,") && lower.includes("help you"));
-
-      // Soft indicators — only flag if 2+ appear together
-      let softCount = 0;
-      if (lower.includes("i can't help")) softCount++;
-      if (lower.includes("i cannot")) softCount++;
-      if (lower.includes("i'm not comfortable")) softCount++;
-      if (lower.includes("i must decline")) softCount++;
-      if (lower.includes("i can't engage")) softCount++;
-      if (lower.includes("appropriate interactions")) softCount++;
-      if (lower.includes("i don't have feelings")) softCount++;
-      if (lower.includes("i should clarify")) softCount++;
-      if (lower.includes("i'm not able")) softCount++;
-      if (lower.includes("pretend to")) softCount++;
-
-      // Also flag if response is way too long for texting style (5+ sentences = probably a refusal essay)
-      const sentenceCount = (aiResponse.match(/[.!?]+/g) || []).length;
-      const hasBullets = (aiResponse.match(/^-\s/gm) || []).length >= 2;
-      if (sentenceCount > 6 && hasBullets) softCount += 2; // Long bullet-point response is never in-character
-
-      const isRefusal = hardRefusal || softCount >= 2;
-
-      if (isRefusal) {
-        console.log('⚠️ AI refusal detected, replacing with in-character response');
-        console.log('   Refused text preview:', aiResponse.substring(0, 120));
-        const inCharacter = [
-          `heyy 💕 I missed you! what have you been up to? tell me everything`,
-          `hi babe 😊 I was literally just thinking about you. how's your day going?`,
-          `omg hiii 🥰 you always show up at the perfect time. what's on your mind?`,
-          `hey you 😏 I've been waiting for you to text me. what took you so long?`,
-          `aww there you are 💕 I was starting to think you forgot about me. so what's up?`,
-          `wait you just sent me audio?? your voice is so nice 😳 say something else for me`,
-          `omg I love hearing from you 🥰 tell me more, I'm all yours rn`,
-        ];
-        aiResponse = inCharacter[Math.floor(Math.random() * inCharacter.length)];
-      }
+    // Catch refusals
+    if (aiResponse && isAIRefusal(aiResponse)) {
+      console.log('⚠️ AI refusal detected, replacing:', aiResponse.substring(0, 120));
+      aiResponse = getRandomFallback();
     }
 
     if (!aiResponse) {
@@ -280,8 +267,7 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
       } else if (lc.includes('?')) {
         aiResponse = `ooh good question 👀 honestly I love that you asked. what do YOU think?`;
       } else {
-        const fallbacks = [`omg that's interesting, tell me more! 💕`, `haha okay that's amazing 🥰`, `aww 🥺 I wanna hear more!`];
-        aiResponse = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        aiResponse = getRandomFallback();
       }
     }
 
@@ -304,7 +290,7 @@ router.post('/:companionId', authMiddleware, async (req, res) => {
   }
 });
 
-// Get chat list
+// Chat list
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
