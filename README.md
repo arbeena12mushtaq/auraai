@@ -1,4 +1,4 @@
-# ✦ Aura AI — AI Companion Platform
+# ✦ Fantasy Ai — AI Companion Platform
 
 A full-stack AI companion platform inspired by Candy.ai. Features realistic character creation, AI-powered chat, subscription payments, and a full admin panel.
 
