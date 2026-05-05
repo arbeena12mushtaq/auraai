@@ -179,7 +179,13 @@ export default function ChatPage({ companion, onBack, onNavigate, onToggleSave, 
             let audioSaved = false;
             try {
               const token = getToken();
-              const ttsRes = await fetch('/api/voice/tts', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: data.message.content, voice: companion.voice }) });
+              const ttsRes = await fetch('/api/voice/tts', { method: 'POST', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({
+  text: data.message.content,
+  voice: companion.voice,
+  category: companion.category,
+  companionId: companion.id,
+  companionName: companion.name,
+}) });
               if (ttsRes.ok) {
                 const ttsData = await ttsRes.json();
                 if (ttsData.audio_url) {
