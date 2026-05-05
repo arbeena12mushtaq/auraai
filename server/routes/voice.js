@@ -5,6 +5,7 @@ const multer = require('multer');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 
+
 const router = express.Router();
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -208,12 +209,52 @@ async function tryEdgeTTS(cleanText, voiceId) {
   return null;
 }
 
+
+function hashString(str = '') {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function pickStableVoice(list, seedText) {
+  const index = hashString(seedText) % list.length;
+  return list[index];
+}
+
+function resolveVoice({ voice, category, companionId, companionName }) {
+  // If exact selected voice exists, use it
+  if (voice && TTS_VOICES[voice]) {
+    return TTS_VOICES[voice];
+  }
+
+  const seed = `${companionId || ''}-${companionName || ''}-${voice || ''}`;
+
+  if (category === 'Guys') {
+    return pickStableVoice(['onyx', 'echo', 'ash', 'verse'], seed);
+  }
+
+  if (category === 'Anime') {
+    return pickStableVoice(['nova', 'shimmer', 'coral', 'sage'], seed);
+  }
+
+  // Default Girls
+  return pickStableVoice(['shimmer', 'coral', 'nova', 'sage'], seed);
+}
+
 router.post('/tts', authMiddleware, async (req, res) => {
   try {
-    const { text, voice } = req.body;
+    const { text, voice, category, companionId, companionName } = req.body;
     if (!text) return res.status(400).json({ error: 'Text required' });
 
-    const voiceId = TTS_VOICES[voice] || 'shimmer';
+    const voiceId = resolveVoice({
+  voice,
+  category,
+  companionId,
+  companionName,
+});
     const cleanText = cleanForTTS(text);
     const base = getBaseUrl(req);
 
