@@ -72,10 +72,16 @@ const imageLimiter = rateLimit({
 app.use('/api/image', imageLimiter, imageGenRouter);
 app.use('/api/voice', require('./routes/voice'));
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+const app = express();
+const PORT = process.env.PORT || 3001;
 
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
 // Serve React frontend
 const clientBuildPath = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientBuildPath));
@@ -85,18 +91,17 @@ app.get('*', (req, res) => {
   }
 });
 
-async function start() {
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🚀 Aura AI Server running on port ${PORT}`);
+  console.log(`🔗 http://localhost:${PORT}\n`);
+
   try {
     await initDatabase();
-    console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Aura AI Server running on port ${PORT}`);
-      console.log(`🔗 http://localhost:${PORT}\n`);
-    });
+    console.log('✅ Database initialized successfully');
   } catch (err) {
-    console.error('Failed to start server:', err);
-    process.exit(1);
+    console.error('❌ Database initialization failed:', err.message);
   }
-}
+});
 
 start();
