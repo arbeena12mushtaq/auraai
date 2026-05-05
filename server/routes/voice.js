@@ -12,13 +12,39 @@ const sttTempDir = path.join(uploadDir, 'stt-temp');
 if (!fs.existsSync(sttTempDir)) fs.mkdirSync(sttTempDir, { recursive: true });
 
 const TTS_VOICES = {
-  'Soft & Feminine': 'nova',
-  'Warm & Natural': 'shimmer',
-  'Calm & Mature': 'fable',
-  'Flirty & Light': 'alloy',
+  // Current frontend labels
+  'Soft & Gentle': 'shimmer',
+  'Warm & Rich': 'coral',
+  'Bright & Cheerful': 'nova',
+  'Calm & Soothing': 'sage',
+  'Deep & Confident': 'onyx',
+
+  // Female voices
+  'Female Soft': 'shimmer',
+  'Female Warm': 'coral',
+  'Female Playful': 'nova',
+  'Female Calm': 'sage',
+
+  // Male voices
+  'Male Deep': 'onyx',
+  'Male Warm': 'echo',
+  'Male Calm': 'ash',
+  'Male Confident': 'verse',
+
+  // Anime / character style
+  'Anime Cute': 'nova',
+  'Anime Soft': 'shimmer',
+  'Anime Energetic': 'coral',
+  'Anime Calm': 'sage',
+
+  // Old labels, keep for existing characters
+  'Soft & Feminine': 'shimmer',
+  'Warm & Natural': 'coral',
+  'Calm & Mature': 'sage',
+  'Flirty & Light': 'nova',
   'Deep Male': 'onyx',
-  'Friendly Female': 'nova',
-  'Cute & Young': 'shimmer',
+  'Friendly Female': 'shimmer',
+  'Cute & Young': 'nova',
 };
 
 const EDGE_VOICES = {
@@ -187,7 +213,7 @@ router.post('/tts', authMiddleware, async (req, res) => {
     const { text, voice } = req.body;
     if (!text) return res.status(400).json({ error: 'Text required' });
 
-    const voiceId = TTS_VOICES[voice] || 'nova';
+    const voiceId = TTS_VOICES[voice] || 'shimmer';
     const cleanText = cleanForTTS(text);
     const base = getBaseUrl(req);
 
