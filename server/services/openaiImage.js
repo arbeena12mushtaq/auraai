@@ -46,13 +46,13 @@ async function generateAvatarWithOpenAI(prompt, req) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
-        prompt,
-        size: '1024x1024',
-        n: 1,
-      }),
-      signal: controller.signal,
-    });
+  model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1-mini',
+  prompt,
+  size: '1024x1024',
+  quality: process.env.OPENAI_IMAGE_QUALITY || 'low',
+  output_format: 'jpeg',
+  n: 1,
+}),
 
     clearTimeout(timer);
 
