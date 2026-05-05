@@ -4,6 +4,7 @@ const path = require('path');
 const { pool } = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 const { imageToImage, imageToVideo } = require('../services/pixazo');
+const { generateAvatarWithOpenAI } = require('../services/openaiImage');
 
 const router = express.Router();
 const uploadDir = path.join(__dirname, '..', 'uploads');
@@ -418,20 +419,21 @@ router.post('/generate', authMiddleware, async (req, res) => {
       : `photorealistic close-up portrait of a beautiful ${ethnicityPrefix} ${gender}, ${desc}, professional portrait photography, 85mm lens, natural lighting, detailed skin texture, front facing, looking directly at camera, high resolution, studio quality`;
 
     console.log('🎨 Avatar prompt:', prompt);
-    console.log('🌸 Generating avatar via Pollinations first...');
+    
+    console.log('🤖 Generating avatar via OpenAI first...');
 
-    // ✅ CALL GENERATOR
-    let avatar = await generateWithPollinations(prompt, req);
+let avatar;
 
-    // ✅ HANDLE FAIL / TIMEOUT / 429
-    if (avatar?.code === 'RATE_LIMITED') {
-      console.log('⚡ Switching to Pixazo fallback...');
-      avatar = await generateAvatarWithPixazo(prompt);
-    }
+try {
+  avatar = await generateAvatarWithOpenAI(prompt, req);
+} catch (openaiErr) {
+  console.error('⚠️ OpenAI failed, switching to Pixazo:', openaiErr.message);
 
-    // ✅ ALWAYS RETURN RESPONSE
-    return res.json(avatar);
+  // fallback only if OpenAI fails
+  avatar = await generateAvatarWithPixazo(prompt);
+}
 
+return res.json(avatar);
   } catch (err) {
     console.error('Avatar error:', err?.message);
     return res.status(500).json({
