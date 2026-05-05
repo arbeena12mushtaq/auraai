@@ -4,7 +4,11 @@ import { api, getCompanionSlots } from '../utils/api';
 import { Avatar } from '../components/UI';
 
 const PERSONALITIES = ['Sweet & Caring', 'Bold & Confident', 'Shy & Gentle', 'Witty & Playful', 'Wise & Calm', 'Energetic & Fun'];
-const VOICES = ['Soft & Gentle', 'Warm & Rich', 'Bright & Cheerful', 'Calm & Soothing', 'Deep & Confident'];
+const VOICES_BY_CATEGORY = {
+  Girls: ['Female Soft', 'Female Warm', 'Female Playful', 'Female Calm'],
+  Guys: ['Male Deep', 'Male Warm', 'Male Calm', 'Male Confident'],
+  Anime: ['Anime Cute', 'Anime Soft', 'Anime Energetic', 'Anime Calm'],
+};
 const HOBBIES = ['Reading', 'Gaming', 'Cooking', 'Yoga', 'Music', 'Art', 'Travel', 'Fitness', 'Dancing', 'Photography'];
 
 export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 }) {
@@ -17,7 +21,7 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
 
   const [form, setForm] = useState({
     name: '', category: 'Girls', art_style: 'Realistic',
-    personality: 'Sweet & Caring', voice: 'Soft & Gentle',
+    personality: 'Sweet & Caring', voice: 'Female Soft',
     hobbies: [], description: '', avatarFile: null, avatarPreview: null,
     generatedAvatarUrl: null, avatarSeed: 0,
   });
@@ -144,7 +148,20 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
 
           <div className="form-label" style={{ marginTop: 16 }}>Character Type</div>
           <div className="chip-group mb-2">
-            {['Girls', 'Guys', 'Anime'].map(s => <Chip key={s} value={s} selected={form.category===s} onClick={() => set('category', s)} />)}
+            {['Girls', 'Guys', 'Anime'].map(s => (
+  <Chip
+    key={s}
+    value={s}
+    selected={form.category === s}
+    onClick={() => {
+      setForm(f => ({
+        ...f,
+        category: s,
+        voice: VOICES_BY_CATEGORY[s][0],
+      }));
+    }}
+  />
+))}
           </div>
 
           <div className="form-label">Art Style</div>
@@ -245,7 +262,16 @@ export default function CreatePage({ onChat, onNavigate, myCompanionCount = 0 })
           <div className="form-label">Personality</div>
           <div className="chip-group">{PERSONALITIES.map(v => <Chip key={v} value={v} selected={form.personality===v} onClick={() => set('personality', v)} />)}</div>
           <div className="form-label">Voice</div>
-          <div className="chip-group">{VOICES.map(v => <Chip key={v} value={v} selected={form.voice===v} onClick={() => set('voice', v)} />)}</div>
+<div className="chip-group">
+  {(VOICES_BY_CATEGORY[form.category] || VOICES_BY_CATEGORY.Girls).map(v => (
+    <Chip
+      key={v}
+      value={v}
+      selected={form.voice === v}
+      onClick={() => set('voice', v)}
+    />
+  ))}
+</div>
           <div className="form-label">Hobbies (pick up to 3)</div>
           <div className="chip-group">{HOBBIES.map(v => <Chip key={v} value={v} selected={form.hobbies.includes(v)} onClick={() => toggleHobby(v)} />)}</div>
         </div>
